@@ -1,7 +1,21 @@
 from typing import Dict, Any
 
 def generate_trade_signal(analysis: Dict[str, Any]) -> Dict[str, Any]:
-    """Analyze indicators to generate BUY/SELL/HOLD recommendation"""
+    """
+    Analyze indicators to generate professional BUY/SELL/HOLD recommendations
+    using a Weighted Confluence Scoring system.
+    
+    Category Weights:
+    - Trend (SMA Cross, Price vs SMA): 40% (Max 4.0 points)
+    - Momentum (RSI Levels): 30% (Max 3.0 points)
+    - Momentum Crossover (MACD Histogram): 20% (Max 2.0 points)
+    - Support / Resistance Proximity: 10% (Max 1.0 point)
+    
+    Decision Rules:
+    - Net Score >= 2.0 -> BUY
+    - Net Score <= -2.0 -> SELL
+    - -2.0 < Net Score < 2.0 -> HOLD
+    """
     if "error" in analysis:
         return {"signal": "UNKNOWN", "reason": "Error in analysis data"}
 
@@ -12,74 +26,94 @@ def generate_trade_signal(analysis: Dict[str, Any]) -> Dict[str, Any]:
     macd = analysis.get("macd")
     macd_signal = analysis.get("macd_signal")
     macd_hist = analysis.get("macd_hist")
-
-    reasons = []
     
-    # Extract 20-day high (resistance) and low (support)
     high_20 = analysis.get("high_20", current_price * 1.1)
     low_20 = analysis.get("low_20", current_price * 0.9)
 
-    # Check if price is near support or resistance
-    is_at_support = current_price <= (low_20 * 1.025)  # Within 2.5% of 20-day support
-    is_at_resistance = current_price >= (high_20 * 0.975)  # Within 2.5% of 20-day resistance
+    reasons = []
+    net_score = 0.0
 
-    # Determine trend and momentum flags
-    is_bullish_trend = False
-    is_bearish_trend = False
+    # --- 1. TREND CONFLUENCE (Max 4.0 Points) ---
     if sma_20 is not None and sma_50 is not None:
-        is_bullish_trend = current_price > sma_20 and sma_20 > sma_50
-        is_bearish_trend = current_price < sma_20 and sma_20 < sma_50
+        # Golden Cross (Bullish) or Death Cross (Bearish)
+        if sma_20 > sma_50:
+            net_score += 2.0
+            reasons.append("SMA Golden Cross (20-day SMA is above 50-day SMA) confirms long-term uptrend.")
+        else:
+            net_score -= 2.0
+            reasons.append("SMA Death Cross (20-day SMA is below 50-day SMA) confirms long-term downtrend.")
 
-    is_bullish_momentum = False
-    if macd is not None and macd_signal is not None:
-        is_bullish_momentum = macd > macd_signal
+        # Price position relative to SMA 20
+        if current_price > sma_20:
+            net_score += 2.0
+            reasons.append("Price is trading above 20-day SMA, indicating short-term bullish control.")
+        else:
+            net_score -= 2.0
+            reasons.append("Price is trading below 20-day SMA, indicating short-term bearish pressure.")
 
-    buy_score = 0.0
-    sell_score = 0.0
-
-    # 1. Evaluate indicators for Spot Market Rules
-    if rsi is not None and rsi <= 35:
-        # Stock is heavily oversold.
-        signal = "BUY" if (is_at_support or rsi < 30) else "HOLD"
-        buy_score = 3.0
+    # --- 2. MOMENTUM CONFLUENCE: RSI (Max 3.0 Points) ---
+    if rsi is not None:
         if rsi < 30:
-            reasons.append(f"RSI is oversold at {rsi:.2f} (under 30) near support. Strong accumulation bounce zone.")
+            net_score += 3.0
+            reasons.append(f"RSI is oversold at {rsi:.2f} (under 30), suggesting a price bounce is highly probable.")
+        elif rsi < 40:
+            net_score += 1.5
+            reasons.append(f"RSI is low at {rsi:.2f} (30-40 zone), indicating strong accumulation interest.")
+        elif rsi > 70:
+            net_score -= 3.0
+            reasons.append(f"RSI is overbought at {rsi:.2f} (above 70), indicating profit-taking / overstretched conditions.")
+        elif rsi > 60:
+            net_score -= 1.5
+            reasons.append(f"RSI is elevated at {rsi:.2f} (60-70 zone), suggesting upward momentum is slowing down.")
         else:
-            reasons.append(f"RSI is low at {rsi:.2f} (under 35). Price is consolidating. Hold position.")
-            
-    elif rsi is not None and rsi >= 65:
-        # Stock is overbought. Profit taking / Exit zone.
-        signal = "SELL" if (is_at_resistance or rsi > 70) else "HOLD"
-        sell_score = 3.0
-        if rsi > 70:
-            reasons.append(f"RSI is overbought at {rsi:.2f} (above 70) near resistance. Book profits.")
-        else:
-            reasons.append(f"RSI is high at {rsi:.2f} (above 65). Upward momentum slowing. Prepare to exit.")
-            
-    else:
-        # Neutral RSI Zone (35 to 65) - base signals on trend and momentum
-        # More balanced checks: Only trigger absolute SELL when BOTH SMA trend AND MACD momentum are bearish.
-        if is_bullish_trend and is_bullish_momentum:
-            signal = "BUY"
-            buy_score = 2.5
-            reasons.append("Strong bullish trend (SMA) and upward momentum (MACD) confirmed. Safe entry.")
-        elif is_bearish_trend and not is_bullish_momentum:
-            if is_at_support:
-                signal = "HOLD"
-                buy_score = 1.0
-                reasons.append("Bearish trend, but price is sitting on critical 20-day support. Hold for bounce.")
+            reasons.append(f"RSI is neutral at {rsi:.2f}, representing a balanced distribution of power.")
+
+    # --- 3. MOMENTUM CONFLUENCE: MACD (Max 2.0 Points) ---
+    if macd is not None and macd_signal is not None and macd_hist is not None:
+        if macd > macd_signal:
+            # Bullish MACD Crossover
+            if macd_hist > 0:
+                net_score += 2.0
+                reasons.append("MACD is positive and histogram is expanding upwards, indicating strong bullish velocity.")
             else:
-                signal = "SELL"
-                sell_score = 2.5
-                reasons.append("Bearish trend and negative momentum. Sell/Exit to protect spot capital.")
-        elif is_bullish_momentum:
-            # Positive momentum but neutral trend
-            signal = "BUY"
-            buy_score = 1.5
-            reasons.append("MACD histogram is expanding upwards. Momentum is turning positive.")
+                net_score += 1.0
+                reasons.append("MACD line is above signal line but momentum is softening.")
         else:
-            signal = "HOLD"
-            reasons.append("Price moving sideways within neutral bands. Hold and wait for trend breakout.")
+            # Bearish MACD Crossover
+            if macd_hist < 0:
+                net_score -= 2.0
+                reasons.append("MACD is negative and histogram is expanding downwards, indicating heavy distribution velocity.")
+            else:
+                net_score -= 1.0
+                reasons.append("MACD line is below signal line but downward pressure is plateauing.")
+
+    # --- 4. SUPPORT & RESISTANCE CONFLUENCE (Max 1.0 Point) ---
+    is_at_support = current_price <= (low_20 * 1.025)
+    is_at_resistance = current_price >= (high_20 * 0.975)
+
+    if is_at_support:
+        net_score += 1.0
+        reasons.append("Price is testing critical 20-day support band. High probability bounce zone.")
+    elif is_at_resistance:
+        net_score -= 1.0
+        reasons.append("Price is testing key 20-day resistance ceiling. High risk of profit-taking rejection.")
+
+    # --- 5. SIGNAL DECISION ---
+    # With a maximum possible score range of -9.0 to +10.0,
+    # we set thresholds higher to prevent normal market noise from triggering constant BUY/SELL.
+    # Score >= 4.0 -> BUY (Clear strong bullish confluence)
+    # Score <= -4.0 -> SELL (Clear strong bearish confluence)
+    # Otherwise -> HOLD (Sideways, consolidation or minor correction)
+    if net_score >= 4.0:
+        signal = "BUY"
+    elif net_score <= -4.0:
+        signal = "SELL"
+    else:
+        signal = "HOLD"
+
+    # Map scores for UI dials (0 to 10 scale)
+    buy_score = min(10.0, max(0.0, net_score))
+    sell_score = min(10.0, max(0.0, -net_score))
 
     # Calculate Day Trading Pivot Point targets (based on yesterday's session OHLC)
     prev_high = analysis.get("prev_high", current_price)
@@ -87,10 +121,9 @@ def generate_trade_signal(analysis: Dict[str, Any]) -> Dict[str, Any]:
     prev_close = analysis.get("prev_close", current_price)
     
     if prev_high == prev_low or prev_high == 0:
-        # Fallback if no range
         target_buy = current_price * 0.995
         target_sell = current_price * 1.005
-        stop_loss = target_buy * 0.99  # Tight 1% stop loss for day trading
+        stop_loss = target_buy * 0.99
     else:
         pivot = (prev_high + prev_low + prev_close) / 3.0
         s1 = (2.0 * pivot) - prev_high
@@ -98,42 +131,41 @@ def generate_trade_signal(analysis: Dict[str, Any]) -> Dict[str, Any]:
         s2 = pivot - (prev_high - prev_low)
         r2 = pivot + (prev_high - prev_low)
         
-        # Determine day trading entry/exit levels
         if signal == "BUY":
             target_buy = current_price
             target_sell = r1 if current_price < r1 else r2
-            stop_loss = target_buy * 0.99  # Tight 1% stop loss below entry
+            stop_loss = target_buy * 0.99
         elif signal == "SELL":
             target_buy = s1 if current_price > s1 else s2
             target_sell = current_price
-            stop_loss = target_buy * 0.99  # Tight 1% stop loss below target buy
+            stop_loss = target_buy * 0.99
         else: # HOLD
             target_buy = s1 if current_price > s1 else s2
             target_sell = r1 if current_price < r1 else r2
-            stop_loss = target_buy * 0.99  # Tight 1% stop loss below target buy
+            stop_loss = target_buy * 0.99
 
-    # Generate written natural language explanation
-    reasons_str = ", ".join([r.lower() for r in reasons])
+    # Generate professional written rationale explanation
+    reasons_str = " ".join(reasons)
     if signal == "BUY":
         explanation = (
-            f"This stock has a BUY recommendation based on strong bullish indicators: {reasons_str}. "
-            f"With an active buy rating (score: {buy_score:.1f}), the indicators show the stock has reached "
-            f"a significant support level or is beginning an upward breakout. This represents a solid entry "
-            f"opportunity near Rs. {target_buy:.2f}."
+            f"Technical Confluence points to a BUY (Net Score: +{net_score:.1f}). "
+            f"The bullish recommendation is confirmed by multiple vectors: {reasons_str} "
+            f"A long entry is recommended at or above Rs. {target_buy:.2f} with a profit target of Rs. {target_sell:.2f} "
+            f"and a strict risk management Stop Loss set at Rs. {stop_loss:.2f}."
         )
     elif signal == "SELL":
         explanation = (
-            f"This stock is currently a SELL. The analysis shows: {reasons_str}. "
-            f"Even if some individual indicators appear oversold, the dominant trend is strongly bearish or showing downward "
-            f"momentum (score: {sell_score:.1f}). It is NOT a BUY right now because buying here carries a high risk of catching "
-            f"a falling knife. We advise exiting or holding cash, and waiting for a confirmed re-entry buy level near Rs. {target_buy:.2f}."
+            f"Technical Confluence points to a SELL (Net Score: {net_score:.1f}). "
+            f"The bearish recommendation is triggered by the following setup: {reasons_str} "
+            f"Buying in this zone carries extreme risk. We advise closing long positions or waiting in cash "
+            f"until a clean accumulation re-entry forms around Rs. {target_buy:.2f}."
         )
     else: # HOLD
         explanation = (
-            f"This stock is currently a HOLD. The indicators show a mixed or sideways market: {reasons_str}. "
-            f"Buy momentum ({buy_score:.1f}) and sell momentum ({sell_score:.1f}) are closely balanced. "
-            f"It is NOT a BUY because there is no clear upward trend or breakout confirmation yet, and it is NOT "
-            f"a SELL because support levels are holding. We recommend waiting for a clear direction before making a spot trade."
+            f"Technical Confluence indicates a HOLD / Neutral bias (Net Score: {net_score:.1f}). "
+            f"Bullish indicators and bearish indicators are balanced: {reasons_str} "
+            f"Sideways consolidation is dominant. Standard trading boundaries are established: Buy bounce near Rs. {target_buy:.2f} "
+            f"and Sell breakout rejection near Rs. {target_sell:.2f}."
         )
 
     return {
