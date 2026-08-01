@@ -174,19 +174,39 @@ import requests
 
 @app.get("/chart/{symbol}")
 def get_chart_data(symbol: str):
-    """Proxy official intraday timeseries from PSX Data Portal"""
+    """Proxy TradingView OHLC history from EK Global Capital for candle charts"""
     clean_sym = symbol.replace('.KA', '').upper()
-    url = f"https://dps.psx.com.pk/timeseries/int/{clean_sym}"
+    # Fetch 90 days of daily history for rendering beautiful candlesticks
+    import time
+    to_time = int(time.time())
+    from_time = to_time - (90 * 24 * 60 * 60) # 90 days ago
+    url = f"https://api.ekglobalcapital.com/tvfeed/history?symbol={clean_sym}&resolution=D&from={from_time}&to={to_time}"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
     }
     try:
-        res = requests.get(url, headers=headers, timeout=5)
+        res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
-            return res.json().get("data", [])
+            return res.json()
     except Exception as e:
-        print(f"Chart proxy error: {e}")
-    return []
+        print(f"TradingView chart proxy error: {e}")
+    return {"s": "no_data"}
+
+@app.get("/analyst/{symbol}")
+def get_analyst_company_info(symbol: str):
+    """Proxy Company info and Analyst opinion from EK Global Capital askanalyst API"""
+    clean_sym = symbol.replace('.KA', '').upper()
+    url = f"https://api.ekglobalcapital.com/market/askanalyst/company/{clean_sym}"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+    }
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            return res.json()
+    except Exception as e:
+        print(f"Analyst proxy error: {e}")
+    return {"status": "error", "message": "Company data not available"}
 
 @app.get("/symbols")
 def get_symbols():

@@ -229,6 +229,8 @@ function App() {
     loadRecs();
   }, []);
 
+  const [analystCompany, setAnalystCompany] = useState(null);
+
   // 2b. Fetch intraday timeseries chart data whenever selectedTicker changes
   useEffect(() => {
     if (!selectedTicker) return;
@@ -237,103 +239,137 @@ function App() {
         setLoadingChart(true);
         const res = await fetch(`${API_BASE}/chart/${selectedTicker}`);
         const data = await res.json();
-        // data contains: [timestamp, price, volume][]
-        // Reverse to show in chronological order (left to right)
-        if (Array.isArray(data) && data.length > 0) {
-          const chronological = [...data].reverse();
-          setChartData(chronological);
+        if (data && data.s === 'ok' && Array.isArray(data.t)) {
+          // Format into candle structure: { time, open, high, low, close, volume }
+          const formattedCandles = data.t.map((t, idx) => ({
+            time: t,
+            open: data.o[idx],
+            high: data.h[idx],
+            low: data.l[idx],
+            close: data.c[idx],
+            volume: data.v[idx]
+          }));
+          setChartData(formattedCandles);
         } else {
           setChartData([]);
         }
       } catch (err) {
         console.error("Error fetching chart:", err);
+        setChartData([]);
       } finally {
         setLoadingChart(false);
       }
     }
+    async function fetchAnalystInfo() {
+      try {
+        const res = await fetch(`${API_BASE}/analyst/${selectedTicker}`);
+        const data = await res.json();
+        if (data && data.status === 'success') {
+          setAnalystCompany(data.company);
+        } else {
+          setAnalystCompany(null);
+        }
+      } catch (err) {
+        console.error("Error loading company info:", err);
+        setAnalystCompany(null);
+      }
+    }
     fetchChart();
+    fetchAnalystInfo();
   }, [selectedTicker]);
 
   const renderChart = () => {
     if (loadingChart) {
       return (
-        <div className="chart-loader" style={{ height: '150px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-color)', borderRadius: '12px' }}>
+        <div className="chart-loader" style={{ height: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-color)', borderRadius: '12px' }}>
           <div className="spinner"></div>
-          <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Loading official PSX chart...</span>
+          <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Loading Candlestick chart...</span>
         </div>
       );
     }
     if (chartData.length === 0) {
       return (
-        <div className="chart-empty" style={{ height: '150px', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '0.85rem', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.01)', border: '1px dashed var(--border-color)', borderRadius: '12px' }}>
-          No intraday chart data available.
+        <div className="chart-empty" style={{ height: '220px', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '0.85rem', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.01)', border: '1px dashed var(--border-color)', borderRadius: '12px' }}>
+          No candlestick chart data available.
         </div>
       );
     }
 
-    // Downsample chart data to 60 points for performance
-    const pointsToDraw = [];
-    const size = 60;
-    const step = Math.max(1, Math.floor(chartData.length / size));
-    for (let i = 0; i < chartData.length; i += step) {
-      pointsToDraw.push(chartData[i]);
-      if (pointsToDraw.length >= size) break;
-    }
+    // Use up to 40 candles for clean spacing
+    const dataSlice = chartData.slice(-40);
+    const highs = dataSlice.map(d => d.high);
+    const lows = dataSlice.map(d => d.low);
+    const maxVal = Math.max(...highs);
+    const minVal = Math.min(...lows);
+    const diff = maxVal - minVal || 1;
 
-    const prices = pointsToDraw.map(p => p[1]);
-    const maxPrice = Math.max(...prices);
-    const minPrice = Math.min(...prices);
-    const priceDiff = maxPrice - minPrice || 1;
+    const width = 600;
+    const height = 220;
+    const padding = 20;
+    const chartHeight = height - padding * 2;
+    const chartWidth = width - padding * 2;
+    const candleWidth = Math.max(3, Math.floor(chartWidth / dataSlice.length) - 4);
 
-    const width = 500;
-    const height = 150;
-    const padding = 10;
-
-    // Map points to SVG coordinates
-    const coordinates = pointsToDraw.map((p, idx) => {
-      const x = padding + (idx / (pointsToDraw.length - 1)) * (width - padding * 2);
-      const y = padding + (1 - (p[1] - minPrice) / priceDiff) * (height - padding * 2);
-      return { x, y };
-    });
-
-    const linePointsStr = coordinates.map(c => `${c.x},${c.y}`).join(' ');
-
-    // Path for filled area below the line
-    const areaPathStr = `M ${coordinates[0].x} ${height} ` +
-      coordinates.map(c => `L ${c.x} ${c.y}`).join(' ') +
-      ` L ${coordinates[coordinates.length - 1].x} ${height} Z`;
-
-    const isUp = prices[prices.length - 1] >= prices[0];
-    const chartColor = isUp ? 'var(--color-buy)' : 'var(--color-sell)';
-    const chartGradientId = isUp ? 'greenGrad' : 'redGrad';
+    const getY = (val) => padding + (1 - (val - minVal) / diff) * chartHeight;
 
     return (
       <div className="sparkline-container" style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '1rem', marginBottom: '2rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', fontSize: '0.85rem' }}>
-          <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>📈 Live Intraday Chart (DPS)</span>
-          <span style={{ background: '#f1f5f9', border: '1px solid rgba(15, 23, 42, 0.08)', color: 'var(--text-secondary)', padding: '0.25rem 0.6rem', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 600 }}>
-            High: Rs. {maxPrice.toFixed(2)} | Low: Rs. {minPrice.toFixed(2)}
+        <div style={{ display: 'flex', justifycontent: 'space-between', alignItems: 'center', marginBottom: '1rem', fontSize: '0.85rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>🕯️ Candlestick Trading Chart (Daily History)</span>
+          <span style={{ background: '#f0f7f4', border: '1px solid rgba(16, 185, 129, 0.15)', color: '#047857', padding: '0.25rem 0.6rem', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 600 }}>
+            High: Rs. {maxVal.toFixed(2)} | Low: Rs. {minVal.toFixed(2)}
           </span>
         </div>
-        <svg viewBox={`0 0 ${width} ${height}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
-          <defs>
-            <linearGradient id="greenGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--color-buy)" stopOpacity="0.25" />
-              <stop offset="100%" stopColor="var(--color-buy)" stopOpacity="0.0" />
-            </linearGradient>
-            <linearGradient id="redGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--color-sell)" stopOpacity="0.25" />
-              <stop offset="100%" stopColor="var(--color-sell)" stopOpacity="0.0" />
-            </linearGradient>
-          </defs>
-          <path d={areaPathStr} fill={`url(#${chartGradientId})`} />
-          <polyline
-            fill="none"
-            stroke={chartColor}
-            strokeWidth="2.5"
-            points={linePointsStr}
-          />
-        </svg>
+        <div className="chart-wrapper">
+          <svg viewBox={`0 0 ${width} ${height}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
+            {/* Gridlines */}
+            {[0, 0.25, 0.5, 0.75, 1].map((ratio, i) => {
+              const y = padding + ratio * chartHeight;
+              const val = maxVal - ratio * diff;
+              return (
+                <g key={i}>
+                  <line x1={padding} y1={y} x2={width - padding} y2={y} stroke="rgba(0,0,0,0.05)" strokeDasharray="3,3" />
+                  <text x={width - padding + 5} y={y + 4} fontSize="8" fill="#94a3b8" textAnchor="start">
+                    {val.toFixed(1)}
+                  </text>
+                </g>
+              );
+            })}
+
+            {/* Candlesticks */}
+            {dataSlice.map((candle, idx) => {
+              const x = padding + (idx / (dataSlice.length - 1)) * (chartWidth - candleWidth);
+              const yOpen = getY(candle.open);
+              const yClose = getY(candle.close);
+              const yHigh = getY(candle.high);
+              const yLow = getY(candle.low);
+
+              const isGreen = candle.close >= candle.open;
+              const color = isGreen ? 'var(--color-buy)' : 'var(--color-sell)';
+
+              const bodyTop = Math.min(yOpen, yClose);
+              const bodyHeight = Math.max(1.5, Math.abs(yOpen - yClose));
+
+              return (
+                <g key={idx}>
+                  {/* Shadow Line */}
+                  <line x1={x + candleWidth / 2} y1={yHigh} x2={x + candleWidth / 2} y2={yLow} stroke={color} strokeWidth="1.5" />
+                  {/* Real Body */}
+                  <rect
+                    x={x}
+                    y={bodyTop}
+                    width={candleWidth}
+                    height={bodyHeight}
+                    fill={color}
+                    stroke={color}
+                    strokeWidth="0.5"
+                    rx="1"
+                  />
+                </g>
+              );
+            })}
+          </svg>
+        </div>
       </div>
     );
   };
@@ -752,6 +788,28 @@ function App() {
 
                     {/* Live Sparkline Area Chart */}
                     {renderChart()}
+
+                    {/* AskAnalyst Company Info Panel */}
+                    {analystCompany && (
+                      <div className="glass-panel" style={{ background: '#f0f7f4', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: '12px', padding: '1.25rem', marginBottom: '2rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.75rem' }}>
+                          {analystCompany.image && (
+                            <img src={analystCompany.image} alt={analystCompany.name} style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'contain', background: '#ffffff', padding: '4px', border: '1px solid rgba(0,0,0,0.05)' }} />
+                          )}
+                          <div>
+                            <h4 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)' }}>{analystCompany.name}</h4>
+                            <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#047857', fontWeight: 600 }}>
+                              📁 {analystCompany.sector || 'General Stock'}
+                            </span>
+                          </div>
+                        </div>
+                        {analystCompany.description && (
+                          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.5', marginTop: '0.5rem' }}>
+                            {analystCompany.description}
+                          </p>
+                        )}
+                      </div>
+                    )}
 
                     {/* Indicators grid */}
                     <div className="indicators-grid">
