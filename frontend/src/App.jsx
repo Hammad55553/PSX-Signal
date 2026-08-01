@@ -1,11 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
-
-const API_BASE = import.meta.env.VITE_API_BASE || (
-  window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? 'http://localhost:8000'
-    : window.location.origin  // In production: same domain as frontend
-);
+import { api } from './services/api';
+import { CandlestickChart } from './components/CandlestickChart';
+import { CompanyDetails } from './components/CompanyDetails';
 
 function App() {
   const [tickers, setTickers] = useState([]);
@@ -44,8 +41,7 @@ function App() {
     async function loadTickers() {
       try {
         setLoadingList(true);
-        const res = await fetch(`${API_BASE}/tickers`);
-        const tickersList = await res.json();
+        const tickersList = await api.fetchTickers();
         setTickers([...new Set(tickersList)]);
 
         if (tickersList.length > 0) {
@@ -65,11 +61,8 @@ function App() {
     let reconnectTimeout;
 
     function connectWebSocket() {
-      // Clear any existing connection error if we successfully start/retry
       setError(null);
-
-      // Use 127.0.0.1 explicitly to avoid localhost resolution issues on some machines
-      ws = new WebSocket(`ws://127.0.0.1:8000/ws/signals`);
+      ws = new WebSocket(api.getWebSocketUrl());
 
       ws.onopen = () => {
         console.log("WebSocket connected successfully");
@@ -123,26 +116,27 @@ function App() {
 
       ws.onerror = (err) => {
         console.error("WebSocket connection error. Activating HTTP polling fallback...", err);
-        // Start polling fallback immediately so the dashboard works in serverless deployments
         triggerFallbackPolling();
       };
     }
 
     async function fetchSignalsHttp() {
       try {
-        const res = await fetch(`${API_BASE}/signals`);
+        const data = await api.fetchTickers(); // Fallback endpoints trigger
+        // Re-route to signals list fetcher
+        const res = await fetch(api.getWebSocketUrl().replace('ws://', 'http://').replace('wss://', 'https://').replace('/ws/signals', '/signals'));
         if (!res.ok) return;
-        const data = await res.json();
-        if (data.results) {
+        const sigs = await res.json();
+        if (sigs.results) {
           const signalMap = {};
           const newAlerts = [];
 
-          data.results.forEach((sig) => {
+          sigs.results.forEach((sig) => {
             signalMap[sig.ticker] = sig;
           });
 
           setAllSignals((prevSignals) => {
-            data.results.forEach((sig) => {
+            sigs.results.forEach((sig) => {
               const prevSig = prevSignals[sig.ticker];
               if (prevSig && prevSig.signal !== sig.signal && (sig.signal === "BUY" || sig.signal === "SELL")) {
                 const newAlert = {
@@ -174,7 +168,7 @@ function App() {
     function triggerFallbackPolling() {
       if (fallbackInterval) return;
       fetchSignalsHttp();
-      fallbackInterval = setInterval(fetchSignalsHttp, 8000); // Poll every 8 seconds
+      fallbackInterval = setInterval(fetchSignalsHttp, 8000);
     }
 
     connectWebSocket();
@@ -189,8 +183,6 @@ function App() {
   // 2. Automatically sync detail view with the live WebSocket signals map
   useEffect(() => {
     if (!selectedTicker || !allSignals[selectedTicker]) return;
-
-    // Set both variables to the current stock's live websocket details
     const liveData = allSignals[selectedTicker];
     setSelectedAnalysis(liveData);
     setSelectedSignal(liveData);
@@ -200,8 +192,7 @@ function App() {
   useEffect(() => {
     async function loadSymbols() {
       try {
-        const res = await fetch(`${API_BASE}/symbols`);
-        const data = await res.json();
+        const data = await api.fetchSymbols();
         if (Array.isArray(data)) {
           setAllSymbolsList(data);
         }
@@ -217,8 +208,7 @@ function App() {
     async function loadRecs() {
       try {
         setLoadingRecs(true);
-        const res = await fetch(`${API_BASE}/market-recommendations`);
-        const data = await res.json();
+        const data = await api.fetchMarketRecommendations();
         setMarketRecommendations(data);
       } catch (err) {
         console.error("Error loading recommendations:", err);
@@ -237,10 +227,8 @@ function App() {
     async function fetchChart() {
       try {
         setLoadingChart(true);
-        const res = await fetch(`${API_BASE}/chart/${selectedTicker}`);
-        const data = await res.json();
+        const data = await api.fetchChartData(selectedTicker);
         if (data && data.s === 'ok' && Array.isArray(data.t)) {
-          // Format into candle structure: { time, open, high, low, close, volume }
           const formattedCandles = data.t.map((t, idx) => ({
             time: t,
             open: data.o[idx],
@@ -262,8 +250,7 @@ function App() {
     }
     async function fetchAnalystInfo() {
       try {
-        const res = await fetch(`${API_BASE}/analyst/${selectedTicker}`);
-        const data = await res.json();
+        const data = await api.fetchAnalystInfo(selectedTicker);
         if (data && data.status === 'success') {
           setAnalystCompany(data.company);
         } else {
@@ -278,101 +265,6 @@ function App() {
     fetchAnalystInfo();
   }, [selectedTicker]);
 
-  const renderChart = () => {
-    if (loadingChart) {
-      return (
-        <div className="chart-loader" style={{ height: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-color)', borderRadius: '12px' }}>
-          <div className="spinner"></div>
-          <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Loading Candlestick chart...</span>
-        </div>
-      );
-    }
-    if (chartData.length === 0) {
-      return (
-        <div className="chart-empty" style={{ height: '220px', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '0.85rem', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.01)', border: '1px dashed var(--border-color)', borderRadius: '12px' }}>
-          No candlestick chart data available.
-        </div>
-      );
-    }
-
-    // Use up to 40 candles for clean spacing
-    const dataSlice = chartData.slice(-40);
-    const highs = dataSlice.map(d => d.high);
-    const lows = dataSlice.map(d => d.low);
-    const maxVal = Math.max(...highs);
-    const minVal = Math.min(...lows);
-    const diff = maxVal - minVal || 1;
-
-    const width = 600;
-    const height = 220;
-    const padding = 20;
-    const chartHeight = height - padding * 2;
-    const chartWidth = width - padding * 2;
-    const candleWidth = Math.max(3, Math.floor(chartWidth / dataSlice.length) - 4);
-
-    const getY = (val) => padding + (1 - (val - minVal) / diff) * chartHeight;
-
-    return (
-      <div className="sparkline-container" style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '1rem', marginBottom: '2rem' }}>
-        <div style={{ display: 'flex', justifycontent: 'space-between', alignItems: 'center', marginBottom: '1rem', fontSize: '0.85rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-          <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>🕯️ Candlestick Trading Chart (Daily History)</span>
-          <span style={{ background: '#f0f7f4', border: '1px solid rgba(16, 185, 129, 0.15)', color: '#047857', padding: '0.25rem 0.6rem', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 600 }}>
-            High: Rs. {maxVal.toFixed(2)} | Low: Rs. {minVal.toFixed(2)}
-          </span>
-        </div>
-        <div className="chart-wrapper">
-          <svg viewBox={`0 0 ${width} ${height}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
-            {/* Gridlines */}
-            {[0, 0.25, 0.5, 0.75, 1].map((ratio, i) => {
-              const y = padding + ratio * chartHeight;
-              const val = maxVal - ratio * diff;
-              return (
-                <g key={i}>
-                  <line x1={padding} y1={y} x2={width - padding} y2={y} stroke="rgba(0,0,0,0.05)" strokeDasharray="3,3" />
-                  <text x={width - padding + 5} y={y + 4} fontSize="8" fill="#94a3b8" textAnchor="start">
-                    {val.toFixed(1)}
-                  </text>
-                </g>
-              );
-            })}
-
-            {/* Candlesticks */}
-            {dataSlice.map((candle, idx) => {
-              const x = padding + (idx / (dataSlice.length - 1)) * (chartWidth - candleWidth);
-              const yOpen = getY(candle.open);
-              const yClose = getY(candle.close);
-              const yHigh = getY(candle.high);
-              const yLow = getY(candle.low);
-
-              const isGreen = candle.close >= candle.open;
-              const color = isGreen ? 'var(--color-buy)' : 'var(--color-sell)';
-
-              const bodyTop = Math.min(yOpen, yClose);
-              const bodyHeight = Math.max(1.5, Math.abs(yOpen - yClose));
-
-              return (
-                <g key={idx}>
-                  {/* Shadow Line */}
-                  <line x1={x + candleWidth / 2} y1={yHigh} x2={x + candleWidth / 2} y2={yLow} stroke={color} strokeWidth="1.5" />
-                  {/* Real Body */}
-                  <rect
-                    x={x}
-                    y={bodyTop}
-                    width={candleWidth}
-                    height={bodyHeight}
-                    fill={color}
-                    stroke={color}
-                    strokeWidth="0.5"
-                    rx="1"
-                  />
-                </g>
-              );
-            })}
-          </svg>
-        </div>
-      </div>
-    );
-  };
   const handleSearch = async (e) => {
     e.preventDefault();
     if (!searchQuery.trim()) return;
@@ -386,22 +278,15 @@ function App() {
       setSearchError('');
       setLoadingDetails(true);
 
-      const res = await fetch(`${API_BASE}/signal/${tickerToSearch}`);
-      if (!res.ok) {
-        throw new Error("Symbol not found or invalid");
-      }
-
-      const data = await res.json();
+      const data = await api.fetchSignal(tickerToSearch);
       if (data.error) {
         throw new Error(data.error);
       }
 
-      // Update our lists and selected ticker
       if (!tickers.includes(tickerToSearch)) {
         setTickers(prev => [...new Set([...prev, tickerToSearch])]);
       }
 
-      // Add to our current signals map so the websocket sync can bind to it
       setAllSignals(prev => ({
         ...prev,
         [tickerToSearch]: data
@@ -429,7 +314,7 @@ function App() {
     const filtered = allSymbolsList.filter(item =>
       item.symbol.toLowerCase().includes(cleanVal) ||
       item.name.toLowerCase().includes(cleanVal)
-    ).slice(0, 8); // Display top 8 results
+    ).slice(0, 8);
     setSuggestions(filtered);
   };
 
@@ -446,12 +331,7 @@ function App() {
       setSearchError('');
       setLoadingDetails(true);
 
-      const res = await fetch(`${API_BASE}/signal/${tickerToSearch}`);
-      if (!res.ok) {
-        throw new Error("Symbol not found");
-      }
-
-      const data = await res.json();
+      const data = await api.fetchSignal(tickerToSearch);
       if (data.error) {
         throw new Error(data.error);
       }
@@ -487,10 +367,9 @@ function App() {
     setToasts((prevToasts) => [newToast, ...prevToasts]);
     setTimeout(() => {
       setToasts((prevToasts) => prevToasts.filter((t) => t.id !== id));
-    }, 60000); // Display for 60 seconds (1 minute)
+    }, 60000);
   };
 
-  // 3. Send Telegram Notification
   const sendTelegramAlertHandler = async (signalObj) => {
     if (!telegramToken || !telegramChatId) {
       setTgStatus('Please enter both Token and Chat ID.');
@@ -506,28 +385,14 @@ function App() {
         `🎯 <b>Sell Price (Target):</b> Rs. ${signalObj.target_sell_price.toFixed(2)}\n` +
         `🛑 <b>Stop Loss:</b> Rs. ${signalObj.stop_loss.toFixed(2)}`;
 
-      const res = await fetch(`${API_BASE}/send-alert`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token: telegramToken,
-          chat_id: telegramChatId,
-          message: message
-        })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setTgStatus('Alert sent to Telegram successfully!');
-      } else {
-        setTgStatus(`Error: ${data.detail || 'Failed to send'}`);
-      }
+      await api.sendTelegramAlert(telegramToken, telegramChatId, message);
+      setTgStatus('Alert sent to Telegram successfully!');
     } catch (err) {
       console.error(err);
-      setTgStatus('Connection failed. Make sure server is online.');
+      setTgStatus(err.message || 'Connection failed.');
     }
   };
 
-  // Dynamic recommendations based on actual live scores of our tracked/added tickers
   const dynamicBuyRecs = Object.keys(allSignals)
     .map(ticker => allSignals[ticker])
     .filter(sig => sig && sig.buy_score !== undefined)
@@ -546,9 +411,20 @@ function App() {
       strength: `${Math.round(sig.sell_score * 10)}%`
     }));
 
+  // Candlestick calculation helper
+  const getMinMaxHighLow = () => {
+    if (chartData.length === 0) return { max: 100, min: 0 };
+    const slice = chartData.slice(-40);
+    return {
+      max: Math.max(...slice.map(d => d.high)),
+      min: Math.min(...slice.map(d => d.low))
+    };
+  };
+  const { max: chartMax, min: chartMin } = getMinMaxHighLow();
+
   return (
     <div className="dashboard-container">
-      {/* Toast Notifications Container (stacks on the right side) */}
+      {/* Toast Notifications Container */}
       <div className="toast-container">
         {toasts.map((toast) => (
           <div key={toast.id} className={`notification-toast ${toast.signal.toLowerCase()}`}>
@@ -584,20 +460,15 @@ function App() {
         <div style={{ color: '#ef4444', background: 'rgba(239, 68, 68, 0.1)', padding: '1.5rem', borderRadius: '12px', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
           <h3>⚠️ Connection Error</h3>
           <p style={{ marginTop: '0.5rem' }}>{error}</p>
-          <p style={{ fontSize: '0.9rem', color: '#94a3b8', marginTop: '0.5rem' }}>
-            Make sure to start your FastAPI server locally: <code>uvicorn main:app --reload</code>
-          </p>
         </div>
       ) : (
         <div className="dashboard-content-wrapper">
           <div className="main-grid">
-            {/* Left panel: List of Tickers & Telegram Config */}
+            {/* Left panel: List of Tickers */}
             <div className="left-panel-wrapper">
-              {/* List of Tickers */}
               <div className="glass-panel" style={{ marginBottom: '2rem' }}>
                 <h3 className="panel-title">Tracked Securities</h3>
 
-                {/* Custom Ticker Search Form with Autocomplete */}
                 <form onSubmit={handleSearch} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.25rem', position: 'relative' }}>
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <input
@@ -613,7 +484,6 @@ function App() {
                     </button>
                   </div>
 
-                  {/* Autocomplete Suggestions Dropdown */}
                   {suggestions.length > 0 && (
                     <div className="search-suggestions-dropdown" style={{ background: '#ffffff', border: '1px solid var(--border-color)', borderRadius: '8px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 1000, maxHeight: '200px', overflowY: 'auto', marginTop: '0.25rem' }}>
                       {suggestions.map((item, idx) => (
@@ -677,43 +547,6 @@ function App() {
                   </div>
                 )}
               </div>
-
-              {/* Telegram Notification Config */}
-              {/* <div className="glass-panel">
-              <h3 className="panel-title">📱 Telegram Alerts Config</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                <input
-                  type="text"
-                  placeholder="Telegram Bot Token"
-                  className="config-input"
-                  value={telegramToken}
-                  onChange={(e) => setTelegramToken(e.target.value)}
-                />
-                <input
-                  type="text"
-                  placeholder="Telegram Chat ID or Channel ID"
-                  className="config-input"
-                  value={telegramChatId}
-                  onChange={(e) => setTelegramChatId(e.target.value)}
-                />
-                <button
-                  className="config-button"
-                  onClick={() => {
-                    if (selectedSignal) {
-                      sendTelegramAlertHandler(selectedSignal);
-                    }
-                  }}
-                  disabled={!selectedSignal}
-                >
-                  Send Selected Stock Alert to Telegram
-                </button>
-                {tgStatus && (
-                  <div style={{ fontSize: '0.85rem', color: '#60a5fa', marginTop: '0.25rem', textAlign: 'center' }}>
-                    {tgStatus}
-                  </div>
-                )}
-              </div>
-            </div> */}
             </div>
 
             {/* Right panel: Details view */}
@@ -786,30 +619,11 @@ function App() {
                       </div>
                     </div>
 
-                    {/* Live Sparkline Area Chart */}
-                    {renderChart()}
+                    {/* SVG Candlestick Chart */}
+                    <CandlestickChart chartData={chartData} loadingChart={loadingChart} maxVal={chartMax} minVal={chartMin} />
 
                     {/* AskAnalyst Company Info Panel */}
-                    {analystCompany && (
-                      <div className="glass-panel" style={{ background: '#f0f7f4', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: '12px', padding: '1.25rem', marginBottom: '2rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.75rem' }}>
-                          {analystCompany.image && (
-                            <img src={analystCompany.image} alt={analystCompany.name} style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'contain', background: '#ffffff', padding: '4px', border: '1px solid rgba(0,0,0,0.05)' }} />
-                          )}
-                          <div>
-                            <h4 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)' }}>{analystCompany.name}</h4>
-                            <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#047857', fontWeight: 600 }}>
-                              📁 {analystCompany.sector || 'General Stock'}
-                            </span>
-                          </div>
-                        </div>
-                        {analystCompany.description && (
-                          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.5', marginTop: '0.5rem' }}>
-                            {analystCompany.description}
-                          </p>
-                        )}
-                      </div>
-                    )}
+                    <CompanyDetails analystCompany={analystCompany} />
 
                     {/* Indicators grid */}
                     <div className="indicators-grid">
@@ -954,7 +768,7 @@ function App() {
             </div>
           </div>
 
-          {/* Live Market recommendations table (daily highlights scraped from psxtechnicalanalysis) */}
+          {/* Live Market Recommendations */}
           <div className="glass-panel" style={{ marginTop: '2rem' }}>
             <h3 className="panel-title" style={{ fontSize: '1.15rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem', marginBottom: '1.25rem' }}>
               🔥 Live Market Technical Highlights (Daily Recommendations)
@@ -981,7 +795,6 @@ function App() {
                       </thead>
                       <tbody>
                         {marketRecommendations.buy_recommendations.length === 0 ? (
-                          // Fallback to dynamic live buy signals
                           dynamicBuyRecs.length === 0 ? (
                             <tr>
                               <td colSpan="2" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No buy recommendations loaded today.</td>
@@ -1032,7 +845,6 @@ function App() {
                       </thead>
                       <tbody>
                         {marketRecommendations.sell_recommendations.length === 0 ? (
-                          // Fallback to dynamic live sell signals
                           dynamicSellRecs.length === 0 ? (
                             <tr>
                               <td colSpan="2" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No sell recommendations loaded today.</td>
