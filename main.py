@@ -34,6 +34,20 @@ if os.path.exists(FRONTEND_DIST):
     if os.path.exists(assets_dir):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
+@app.get("/assets/index.js")
+def serve_js():
+    f = os.path.join(FRONTEND_DIST, "assets", "index.js")
+    if os.path.exists(f):
+        return FileResponse(f, media_type="application/javascript")
+    raise HTTPException(status_code=404, detail="index.js not found")
+
+@app.get("/assets/index.css")
+def serve_css():
+    f = os.path.join(FRONTEND_DIST, "assets", "index.css")
+    if os.path.exists(f):
+        return FileResponse(f, media_type="text/css")
+    raise HTTPException(status_code=404, detail="index.css not found")
+
 @app.get("/favicon.svg")
 def favicon():
     f = os.path.join(FRONTEND_DIST, "favicon.svg")
