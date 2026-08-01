@@ -377,7 +377,7 @@ function App() {
       setSearchQuery('');
     } catch (err) {
       console.error(err);
-      setSearchError("Ticker not found or invalid in PSX. Please try again.");
+      setSearchError(err.message || "Ticker not found or invalid in PSX. Please try again.");
     } finally {
       setLoadingDetails(false);
     }
@@ -435,7 +435,7 @@ function App() {
       setSearchQuery('');
     } catch (err) {
       console.error(err);
-      setSearchError("Ticker not found or invalid in PSX. Please try again.");
+      setSearchError(err.message || "Ticker not found or invalid in PSX. Please try again.");
     } finally {
       setLoadingDetails(false);
     }
