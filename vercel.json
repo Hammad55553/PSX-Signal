@@ -2,22 +2,11 @@
   "version": 2,
   "builds": [
     {
-      "src": "frontend/package.json",
-      "use": "@vercel/static-build",
-      "config": {
-        "distDir": "dist"
-      }
-    },
-    {
       "src": "main.py",
       "use": "@vercel/python"
     }
   ],
   "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "main.py"
-    },
     {
       "src": "/tickers",
       "dest": "main.py"
@@ -51,8 +40,12 @@
       "dest": "main.py"
     },
     {
+      "src": "/ws/(.*)",
+      "dest": "main.py"
+    },
+    {
       "src": "/(.*)",
-      "dest": "frontend/dist/$1"
+      "dest": "main.py"
     }
   ]
 }

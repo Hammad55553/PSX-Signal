@@ -25,15 +25,29 @@ app.add_middleware(
 
 # Serve React build (static files) from /frontend/dist
 FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+
 if os.path.exists(FRONTEND_DIST):
-    app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="assets")
+    # Mount /assets for Vite-compiled JS/CSS bundles
+    assets_dir = os.path.join(FRONTEND_DIST, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+@app.get("/favicon.svg")
+def favicon():
+    f = os.path.join(FRONTEND_DIST, "favicon.svg")
+    return FileResponse(f) if os.path.exists(f) else {"error": "not found"}
+
+@app.get("/icons.svg")
+def icons():
+    f = os.path.join(FRONTEND_DIST, "icons.svg")
+    return FileResponse(f) if os.path.exists(f) else {"error": "not found"}
 
 @app.get("/")
 def read_root():
-    # Serve React app index.html if the build exists
+    # Serve React SPA index.html
     index_file = os.path.join(FRONTEND_DIST, "index.html")
     if os.path.exists(index_file):
-        return FileResponse(index_file)
+        return FileResponse(index_file, media_type="text/html")
     return {
         "status": "online",
         "message": "PSX Trading Bot API — deploy frontend build to frontend/dist"
