@@ -6,7 +6,11 @@
       "use": "@vercel/python"
     },
     {
-      "src": "frontend/dist/**",
+      "src": "frontend/dist/assets/*",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "frontend/dist/index.html",
       "use": "@vercel/static"
     }
   ],
