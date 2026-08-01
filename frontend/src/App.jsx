@@ -100,7 +100,7 @@ function App() {
                 triggerToast(newAlert);
               }
             });
-            return signalMap;
+            return { ...prevSignals, ...signalMap };
           });
 
           if (newAlerts.length > 0) {
