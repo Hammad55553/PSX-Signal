@@ -18,6 +18,9 @@
     { "src": "/health", "dest": "main.py" },
     { "src": "/telegram-config/(.*)", "dest": "main.py" },
     { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/dist/index.html" }
+    { "src": "/assets/(.*)", "dest": "dist/assets/$1" },
+    { "src": "/favicon.svg", "dest": "dist/favicon.svg" },
+    { "src": "/icons.svg", "dest": "dist/icons.svg" },
+    { "src": "/(.*)", "dest": "dist/index.html" }
   ]
 }
