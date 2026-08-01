@@ -3,8 +3,12 @@ import './App.css';
 import { api } from './services/api';
 import { CandlestickChart } from './components/CandlestickChart';
 import { CompanyDetails } from './components/CompanyDetails';
+import { SpeedometerGauge } from './components/SpeedometerGauge';
+import { SparklineChart } from './components/SparklineChart';
 
 function App() {
+  const [currentScreen, setCurrentScreen] = useState('dashboard'); // 'dashboard' or 'details'
+  const [activeChartTab, setActiveChartTab] = useState('candlestick'); // 'candlestick' or 'sparkline'
   const [tickers, setTickers] = useState([]);
   const [selectedTicker, setSelectedTicker] = useState('');
   const [allSignals, setAllSignals] = useState({});
@@ -349,6 +353,7 @@ function App() {
       setSelectedAnalysis(data);
       setSelectedSignal(data);
       setSearchQuery('');
+      setCurrentScreen('details'); // Navigate to detail view on search/suggest click
     } catch (err) {
       console.error(err);
       setSearchError(err.message || "Ticker not found or invalid in PSX. Please try again.");
@@ -447,12 +452,46 @@ function App() {
 
       {/* Premium Header & Navigation */}
       <header className="header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer' }} onClick={() => setCurrentScreen('dashboard')}>
           <span style={{ fontSize: '2rem' }}>📈</span>
           <h1 style={{ margin: 0 }}>PSX-Signal</h1>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-          <div className="market-badge">🟢 Live Market Portal</div>
+          <button
+            onClick={() => setCurrentScreen('dashboard')}
+            style={{
+              background: currentScreen === 'dashboard' ? 'rgba(255, 255, 255, 0.25)' : 'none',
+              border: 'none',
+              color: '#ffffff',
+              padding: '0.5rem 1rem',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontFamily: 'var(--font-family)',
+              fontSize: '0.85rem'
+            }}
+          >
+            🏠 Market Overview
+          </button>
+          {selectedTicker && (
+            <button
+              onClick={() => setCurrentScreen('details')}
+              style={{
+                background: currentScreen === 'details' ? 'rgba(255, 255, 255, 0.25)' : 'none',
+                border: 'none',
+                color: '#ffffff',
+                padding: '0.5rem 1rem',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontFamily: 'var(--font-family)',
+                fontSize: '0.85rem'
+              }}
+            >
+              📊 {selectedTicker.replace('.KA', '')} Analytics
+            </button>
+          )}
+          <div className="market-badge">🟢 Live</div>
         </div>
       </header>
 
@@ -463,9 +502,9 @@ function App() {
         </div>
       ) : (
         <div className="dashboard-content-wrapper">
-          <div className="main-grid">
-            {/* Left panel: List of Tickers */}
-            <div className="left-panel-wrapper">
+          {currentScreen === 'dashboard' ? (
+            /* OVERVIEW SCREEN (DASHBOARD) */
+            <div>
               <div className="glass-panel" style={{ marginBottom: '2rem' }}>
                 <h3 className="panel-title">Tracked Securities</h3>
 
@@ -512,7 +551,7 @@ function App() {
                     <div className="spinner"></div>
                   </div>
                 ) : (
-                  <div className="ticker-list">
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.25rem' }}>
                     {tickers.map((ticker) => {
                       const summary = allSignals[ticker];
                       const cleanName = ticker.replace('.KA', '');
@@ -520,22 +559,23 @@ function App() {
                         <div
                           key={ticker}
                           className={`ticker-item ${selectedTicker === ticker ? 'active' : ''}`}
-                          onClick={() => setSelectedTicker(ticker)}
+                          onClick={() => {
+                            setSelectedTicker(ticker);
+                            setCurrentScreen('details'); // Navigate to details on click
+                          }}
+                          style={{ padding: '1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                         >
                           <div>
-                            <span className="ticker-name">{cleanName}</span>
+                            <span className="ticker-name" style={{ fontSize: '1.2rem' }}>{cleanName}</span>
                             <div className="ticker-fullname">{summary ? summary.name : 'Karachi Stock Exchange'}</div>
                           </div>
-                          <div className="ticker-price">
+                          <div className="ticker-price" style={{ textAlign: 'right' }}>
                             {summary ? (
                               <>
-                                <div className="price-value">Rs. {summary.current_price.toFixed(2)}</div>
-                                <span className={`signal-pill ${summary.signal.toLowerCase()}`}>
+                                <div className="price-value" style={{ fontSize: '1.1rem', fontWeight: 700 }}>Rs. {summary.current_price.toFixed(2)}</div>
+                                <span className={`signal-pill ${summary.signal.toLowerCase()}`} style={{ display: 'inline-block', marginTop: '0.25rem' }}>
                                   {summary.signal}
                                 </span>
-                                <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
-                                  Vol: {summary.volume ? (summary.volume >= 1000000 ? `${(summary.volume / 1000000).toFixed(1)}M` : summary.volume.toLocaleString()) : 'N/A'}
-                                </div>
                               </>
                             ) : (
                               <div className="price-value">Loading...</div>
@@ -547,87 +587,311 @@ function App() {
                   </div>
                 )}
               </div>
-            </div>
 
-            {/* Right panel: Details view */}
+              {/* Live Market Recommendations Highlights */}
+              <div className="glass-panel" style={{ marginTop: '2rem' }}>
+                <h3 className="panel-title" style={{ fontSize: '1.15rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem', marginBottom: '1.25rem' }}>
+                  🔥 Live Market Technical Highlights (Daily Recommendations)
+                  <span style={{ fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-secondary)' }}>Source: psxtechnicalanalysis.com</span>
+                </h3>
+                {loadingRecs ? (
+                  <div className="loader">
+                    <div className="spinner"></div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }} className="recs-grid-split">
+                    {/* Recommended to Buy Table */}
+                    <div>
+                      <h4 style={{ color: 'var(--color-buy)', fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        📈 Recommended to Buy (Strongest Uptrends)
+                      </h4>
+                      <div style={{ border: '1px solid var(--border-color)', borderRadius: '8px', overflow: 'hidden' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                          <thead>
+                            <tr style={{ background: '#f8fafc', borderBottom: '1px solid var(--border-color)', color: 'var(--text-primary)' }}>
+                              <th style={{ padding: '0.6rem 0.8rem', textAlign: 'left', fontWeight: 600 }}>Symbol</th>
+                              <th style={{ padding: '0.6rem 0.8rem', textAlign: 'right', fontWeight: 600 }}>Buy Strength</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {marketRecommendations.buy_recommendations.length === 0 ? (
+                              dynamicBuyRecs.length === 0 ? (
+                                <tr>
+                                  <td colSpan="2" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No buy recommendations loaded today.</td>
+                                </tr>
+                              ) : (
+                                dynamicBuyRecs.map((item, idx) => (
+                                  <tr
+                                    key={idx}
+                                    onClick={() => selectRecommendationSymbol(item.symbol)}
+                                    style={{ borderBottom: '1px solid var(--border-color)', cursor: 'pointer', transition: 'background-color 0.2s' }}
+                                    className="rec-row-hover"
+                                  >
+                                    <td style={{ padding: '0.6rem 0.8rem', fontWeight: 600, color: '#2563eb' }}>{item.symbol}</td>
+                                    <td style={{ padding: '0.6rem 0.8rem', textAlign: 'right', fontWeight: 600, color: 'var(--color-buy)' }}>{item.strength}</td>
+                                  </tr>
+                                ))
+                              )
+                            ) : (
+                              marketRecommendations.buy_recommendations.map((item, idx) => (
+                                <tr
+                                  key={idx}
+                                  onClick={() => selectRecommendationSymbol(item.symbol)}
+                                  style={{ borderBottom: '1px solid var(--border-color)', cursor: 'pointer', transition: 'background-color 0.2s' }}
+                                  className="rec-row-hover"
+                                >
+                                  <td style={{ padding: '0.6rem 0.8rem', fontWeight: 600, color: '#2563eb' }}>{item.symbol}</td>
+                                  <td style={{ padding: '0.6rem 0.8rem', textAlign: 'right', fontWeight: 600, color: 'var(--color-buy)' }}>{item.strength}</td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* Recommended to Sell Table */}
+                    <div>
+                      <h4 style={{ color: 'var(--color-sell)', fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        📉 Recommended to Sell (Bearish Trends)
+                      </h4>
+                      <div style={{ border: '1px solid var(--border-color)', borderRadius: '8px', overflow: 'hidden' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                          <thead>
+                            <tr style={{ background: '#f8fafc', borderBottom: '1px solid var(--border-color)', color: 'var(--text-primary)' }}>
+                              <th style={{ padding: '0.6rem 0.8rem', textAlign: 'left', fontWeight: 600 }}>Symbol</th>
+                              <th style={{ padding: '0.6rem 0.8rem', textAlign: 'right', fontWeight: 600 }}>Sell Strength</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {marketRecommendations.sell_recommendations.length === 0 ? (
+                              dynamicSellRecs.length === 0 ? (
+                                <tr>
+                                  <td colSpan="2" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No sell recommendations loaded today.</td>
+                                </tr>
+                              ) : (
+                                dynamicSellRecs.map((item, idx) => (
+                                  <tr
+                                    key={idx}
+                                    onClick={() => selectRecommendationSymbol(item.symbol)}
+                                    style={{ borderBottom: '1px solid var(--border-color)', cursor: 'pointer', transition: 'background-color 0.2s' }}
+                                    className="rec-row-hover"
+                                  >
+                                    <td style={{ padding: '0.6rem 0.8rem', fontWeight: 600, color: '#2563eb' }}>{item.symbol}</td>
+                                    <td style={{ padding: '0.6rem 0.8rem', textAlign: 'right', fontWeight: 600, color: 'var(--color-sell)' }}>{item.strength}</td>
+                                  </tr>
+                                ))
+                              )
+                            ) : (
+                              marketRecommendations.sell_recommendations.map((item, idx) => (
+                                <tr
+                                  key={idx}
+                                  onClick={() => selectRecommendationSymbol(item.symbol)}
+                                  style={{ borderBottom: '1px solid var(--border-color)', cursor: 'pointer', transition: 'background-color 0.2s' }}
+                                  className="rec-row-hover"
+                                >
+                                  <td style={{ padding: '0.6rem 0.8rem', fontWeight: 600, color: '#2563eb' }}>{item.symbol}</td>
+                                  <td style={{ padding: '0.6rem 0.8rem', textAlign: 'right', fontWeight: 600, color: 'var(--color-sell)' }}>{item.strength}</td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            /* DEDICATED DETAILS SCREEN FOR A SELECTED STOCK */
             <div className="details-panel-wrapper">
+              <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <button
+                  onClick={() => setCurrentScreen('dashboard')}
+                  style={{
+                    background: '#ffffff',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '8px',
+                    padding: '0.5rem 1rem',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    fontFamily: 'var(--font-family)',
+                    fontSize: '0.85rem',
+                    color: 'var(--text-primary)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.3rem'
+                  }}
+                >
+                  ← Back to Market Overview
+                </button>
+                <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  Market Overview &gt; {selectedSignal ? selectedSignal.name : selectedTicker.replace('.KA', '')}
+                </span>
+              </div>
+
               <div className="glass-panel" style={{ marginBottom: '2rem' }}>
-                <h3 className="panel-title">
-                  Technical Analysis Details
-                  {selectedTicker && <span style={{ color: '#3b82f6', fontSize: '0.9rem' }}>{selectedSignal ? selectedSignal.name : selectedTicker.replace('.KA', '')}</span>}
+                <h3 className="panel-title" style={{ fontSize: '1.25rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
+                  📊 Detailed Technical Analytics Report
+                  <span style={{ color: '#047857', background: '#f0f7f4', padding: '0.25rem 0.5rem', borderRadius: '6px', fontSize: '0.85rem' }}>
+                    {selectedSignal ? selectedSignal.name : selectedTicker.replace('.KA', '')} ({selectedTicker.replace('.KA', '')})
+                  </span>
                 </h3>
 
                 {loadingDetails || !selectedAnalysis || !selectedSignal ? (
                   <div className="loader">
                     <div className="spinner"></div>
                   </div>
-                ) : selectedAnalysis.error || selectedSignal.error ? (
-                  <div style={{ color: '#ef4444', padding: '2rem', textAlign: 'center' }}>
-                    <h4>⚠️ Security Analysis Error</h4>
-                    <p style={{ marginTop: '0.5rem', fontSize: '0.9rem' }}>
-                      {selectedAnalysis.error || selectedSignal.error}
-                    </p>
-                  </div>
                 ) : (
-                  <div>
+                  <div style={{ marginTop: '1.5rem' }}>
                     {/* Recommendation Banner */}
-                    <div className={`signal-banner ${selectedSignal.signal.toLowerCase()}`}>
+                    <div className={`signal-banner ${selectedSignal.signal.toLowerCase()}`} style={{ marginBottom: '2rem' }}>
                       <div className="signal-banner-info">
-                        <h2>Current Recommendation</h2>
-                        <div className={`signal-recomm ${selectedSignal.signal.toLowerCase()}`}>
+                        <h2>Current Spot Recommendation</h2>
+                        <div className={`signal-recomm ${selectedSignal.signal.toLowerCase()}`} style={{ fontSize: '2.2rem' }}>
                           {selectedSignal.signal}
                         </div>
                       </div>
                       <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: '1.8rem', fontWeight: 700 }}>
+                        <div style={{ fontSize: '2rem', fontWeight: 800 }}>
                           Rs. {selectedAnalysis.current_price.toFixed(2)}
                         </div>
-                        <div className={`price-change ${selectedAnalysis.change >= 0 ? 'positive' : 'negative'}`}>
+                        <div className={`price-change ${selectedAnalysis.change >= 0 ? 'positive' : 'negative'}`} style={{ fontSize: '1.05rem', fontWeight: 600 }}>
                           {selectedAnalysis.change >= 0 ? '+' : ''}
                           {selectedAnalysis.change.toFixed(2)} ({selectedAnalysis.change_percent.toFixed(2)}%)
                         </div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
-                          Vol: {selectedAnalysis.volume ? selectedAnalysis.volume.toLocaleString() : 'N/A'} shares
+                        <div style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.8)', marginTop: '0.25rem' }}>
+                          Volume: {selectedAnalysis.volume ? selectedAnalysis.volume.toLocaleString() : 'N/A'} shares
                         </div>
                       </div>
                     </div>
 
-                    {/* SPECIFIC ACTION ITEMS (BUY / SELL PRICE / STOP LOSS) */}
-                    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px dashed var(--border-color)', borderRadius: '12px', padding: '1.25rem', marginBottom: '2rem' }}>
-                      <h4 style={{ fontSize: '1.05rem', fontWeight: 600, color: '#60a5fa', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        🎯 Precision Trading Targets
-                      </h4>
-                      <div className="trading-targets-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', textAlign: 'center' }}>
-                        <div style={{ background: 'rgba(16, 185, 129, 0.05)', padding: '0.75rem', borderRadius: '8px', border: '1px solid rgba(16, 185, 129, 0.15)' }}>
-                          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Target Buy Price</div>
-                          <div style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--color-buy)', marginTop: '0.25rem' }}>
-                            Rs. {selectedSignal.target_buy_price.toFixed(2)}
+                    {/* Speedometer Gauge & Trading Targets Grid */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: '1.5rem', marginBottom: '2rem' }} className="gauge-targets-grid">
+                      <SpeedometerGauge
+                        signal={selectedSignal.signal}
+                        buyScore={selectedSignal.buy_score}
+                        sellScore={selectedSignal.sell_score}
+                      />
+
+                      <div style={{ background: '#ffffff', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '1.5rem' }}>
+                        <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          🎯 Precision Trading Targets (Spot & Swing)
+                        </h4>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', textAlign: 'center' }}>
+                          <div style={{ background: 'rgba(16, 185, 129, 0.05)', padding: '1rem', borderRadius: '12px', border: '1px solid rgba(16, 185, 129, 0.15)' }}>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Target Buy Price</div>
+                            <div style={{ fontSize: '1.4rem', fontWeight: 750, color: 'var(--color-buy)', marginTop: '0.25rem' }}>
+                              Rs. {selectedSignal.target_buy_price.toFixed(2)}
+                            </div>
+                          </div>
+                          <div style={{ background: 'rgba(245, 158, 11, 0.05)', padding: '1rem', borderRadius: '12px', border: '1px solid rgba(245, 158, 11, 0.15)' }}>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Target Sell Price</div>
+                            <div style={{ fontSize: '1.4rem', fontWeight: 750, color: 'var(--color-hold)', marginTop: '0.25rem' }}>
+                              Rs. {selectedSignal.target_sell_price.toFixed(2)}
+                            </div>
+                          </div>
+                          <div style={{ background: 'rgba(239, 68, 68, 0.05)', padding: '1rem', borderRadius: '12px', border: '1px solid rgba(239, 68, 68, 0.15)' }}>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Stop Loss</div>
+                            <div style={{ fontSize: '1.4rem', fontWeight: 750, color: 'var(--color-sell)', marginTop: '0.25rem' }}>
+                              Rs. {selectedSignal.stop_loss.toFixed(2)}
+                            </div>
                           </div>
                         </div>
-                        <div style={{ background: 'rgba(245, 158, 11, 0.05)', padding: '0.75rem', borderRadius: '8px', border: '1px solid rgba(245, 158, 11, 0.15)' }}>
-                          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Target Sell Price</div>
-                          <div style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--color-hold)', marginTop: '0.25rem' }}>
-                            Rs. {selectedSignal.target_sell_price.toFixed(2)}
+                        {selectedSignal.explanation && (
+                          <div style={{ background: 'rgba(59, 130, 246, 0.05)', borderLeft: '4px solid #3b82f6', borderRadius: '0 8px 8px 0', padding: '1rem', marginTop: '1.25rem', lineHeight: '1.5', fontSize: '0.9rem' }}>
+                            <strong style={{ color: '#2563eb', display: 'block', marginBottom: '0.25rem' }}>💡 Trading Rationale:</strong>
+                            <span style={{ color: 'var(--text-secondary)' }}>{selectedSignal.explanation}</span>
                           </div>
-                        </div>
-                        <div style={{ background: 'rgba(239, 68, 68, 0.05)', padding: '0.75rem', borderRadius: '8px', border: '1px solid rgba(239, 68, 68, 0.15)' }}>
-                          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Stop Loss</div>
-                          <div style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--color-sell)', marginTop: '0.25rem' }}>
-                            Rs. {selectedSignal.stop_loss.toFixed(2)}
-                          </div>
-                        </div>
+                        )}
                       </div>
                     </div>
 
-                    {/* SVG Candlestick Chart */}
-                    <CandlestickChart chartData={chartData} loadingChart={loadingChart} maxVal={chartMax} minVal={chartMin} />
+                    {/* Chart Tabs Options */}
+                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                      <button
+                        onClick={() => setActiveChartTab('candlestick')}
+                        style={{
+                          flex: 1,
+                          padding: '0.75rem',
+                          borderRadius: '8px',
+                          border: '1px solid var(--border-color)',
+                          background: activeChartTab === 'candlestick' ? '#10b981' : '#ffffff',
+                          color: activeChartTab === 'candlestick' ? '#ffffff' : 'var(--text-primary)',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          fontFamily: 'var(--font-family)',
+                          fontSize: '0.85rem'
+                        }}
+                      >
+                        🕯️ Candlestick Trading Chart
+                      </button>
+                      <button
+                        onClick={() => setActiveChartTab('sparkline')}
+                        style={{
+                          flex: 1,
+                          padding: '0.75rem',
+                          borderRadius: '8px',
+                          border: '1px solid var(--border-color)',
+                          background: activeChartTab === 'sparkline' ? '#10b981' : '#ffffff',
+                          color: activeChartTab === 'sparkline' ? '#ffffff' : 'var(--text-primary)',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          fontFamily: 'var(--font-family)',
+                          fontSize: '0.85rem'
+                        }}
+                      >
+                        📈 Area Sparkline Chart
+                      </button>
+                    </div>
 
-                    {/* AskAnalyst Company Info Panel */}
+                    {/* SVG Chart Render */}
+                    {activeChartTab === 'candlestick' ? (
+                      <CandlestickChart chartData={chartData} loadingChart={loadingChart} maxVal={chartMax} minVal={chartMin} />
+                    ) : (
+                      (() => {
+                        if (chartData.length === 0) return <SparklineChart chartData={[]} />;
+                        const prices = chartData.map(d => d.close);
+                        const maxPrice = Math.max(...prices);
+                        const minPrice = Math.min(...prices);
+                        const priceDiff = maxPrice - minPrice || 1;
+                        const width = 500;
+                        const height = 150;
+                        const padding = 10;
+                        const coordinates = chartData.slice(-40).map((p, idx) => {
+                          const x = padding + (idx / 39) * (width - padding * 2);
+                          const y = padding + (1 - (p.close - minPrice) / priceDiff) * (height - padding * 2);
+                          return { x, y };
+                        });
+                        const linePointsStr = coordinates.map(c => `${c.x},${c.y}`).join(' ');
+                        const areaPathStr = `M ${coordinates[0].x} ${height} ` +
+                          coordinates.map(c => `L ${c.x} ${c.y}`).join(' ') +
+                          ` L ${coordinates[coordinates.length - 1].x} ${height} Z`;
+                        const isUp = prices[prices.length - 1] >= prices[0];
+                        return (
+                          <SparklineChart
+                            chartData={chartData}
+                            maxPrice={maxPrice}
+                            minPrice={minPrice}
+                            chartColor={isUp ? 'var(--color-buy)' : 'var(--color-sell)'}
+                            chartGradientId={isUp ? 'greenGrad' : 'redGrad'}
+                            areaPathStr={areaPathStr}
+                            linePointsStr={linePointsStr}
+                            width={width}
+                            height={height}
+                          />
+                        );
+                      })()
+                    )}
+
+                    {/* AskAnalyst Company Profile details */}
                     <CompanyDetails analystCompany={analystCompany} />
 
-                    {/* Indicators grid */}
+                    {/* Technical Indicators Summary */}
+                    <h4 style={{ fontSize: '1.1rem', fontWeight: 700, margin: '2rem 0 1rem' }}>Technical Indicators Evaluation</h4>
                     <div className="indicators-grid">
-                      {/* RSI */}
+                      {/* RSI card */}
                       <div className="indicator-card">
                         <div className="indicator-card-title">
                           <span>RSI (14)</span>
@@ -645,25 +909,25 @@ function App() {
                           ></div>
                         </div>
                         <div className="rsi-labels">
-                          <span>0 (Oversold)</span>
+                          <span>0</span>
                           <span>50</span>
-                          <span>100 (Overbought)</span>
+                          <span>100</span>
                         </div>
                       </div>
 
-                      {/* SMAs */}
+                      {/* Moving Average cross */}
                       <div className="indicator-card">
                         <div className="indicator-card-title">Moving Averages (SMA)</div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
                             <span style={{ color: '#94a3b8' }}>SMA 20:</span>
                             <span style={{ fontWeight: 600 }}>Rs. {selectedAnalysis.sma_20 ? selectedAnalysis.sma_20.toFixed(2) : 'N/A'}</span>
                           </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
                             <span style={{ color: '#94a3b8' }}>SMA 50:</span>
                             <span style={{ fontWeight: 600 }}>Rs. {selectedAnalysis.sma_50 ? selectedAnalysis.sma_50.toFixed(2) : 'N/A'}</span>
                           </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.5rem', marginTop: '0.2rem' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(0,0,0,0.05)', paddingTop: '0.5rem', marginTop: '0.2rem', fontSize: '0.85rem' }}>
                             <span style={{ color: '#94a3b8' }}>Trend:</span>
                             <span style={{ fontWeight: 600, color: selectedAnalysis.sma_20 > selectedAnalysis.sma_50 ? 'var(--color-buy)' : 'var(--color-sell)' }}>
                               {selectedAnalysis.sma_20 > selectedAnalysis.sma_50 ? 'Bullish Cross' : 'Bearish Cross'}
@@ -672,216 +936,36 @@ function App() {
                         </div>
                       </div>
 
-                      {/* Session Volume */}
-                      <div className="indicator-card">
-                        <div className="indicator-card-title">Session Volume</div>
-                        <div className="indicator-value" style={{ color: '#3b82f6', marginTop: '0.4rem' }}>
-                          {selectedAnalysis.volume ? selectedAnalysis.volume.toLocaleString() : 'N/A'}
-                        </div>
-                        <div className="indicator-desc" style={{ marginTop: '0.4rem' }}>
-                          Total shares traded in today's active session.
-                        </div>
-                      </div>
-
-                      {/* MACD */}
-                      <div className="indicator-card" style={{ gridColumn: 'span 3' }}>
+                      {/* MACD cross */}
+                      <div className="indicator-card" style={{ gridColumn: 'span 2' }}>
                         <div className="indicator-card-title">MACD (12, 26, 9)</div>
                         <div className="macd-inner" style={{ display: 'flex', justifyContent: 'space-around', alignItems: 'center', marginTop: '0.5rem' }}>
                           <div style={{ textAlign: 'center' }}>
-                            <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#3b82f6' }}>
+                            <div style={{ fontSize: '1.15rem', fontWeight: 700, color: '#3b82f6' }}>
                               {selectedAnalysis.macd ? selectedAnalysis.macd.toFixed(4) : 'N/A'}
                             </div>
-                            <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.25rem' }}>MACD Line</div>
+                            <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>MACD</div>
                           </div>
                           <div style={{ textAlign: 'center' }}>
-                            <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#f59e0b' }}>
+                            <div style={{ fontSize: '1.15rem', fontWeight: 700, color: '#f59e0b' }}>
                               {selectedAnalysis.macd_signal ? selectedAnalysis.macd_signal.toFixed(4) : 'N/A'}
                             </div>
-                            <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.25rem' }}>Signal Line</div>
+                            <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Signal</div>
                           </div>
                           <div style={{ textAlign: 'center' }}>
-                            <div style={{ fontSize: '1.25rem', fontWeight: 700, color: selectedAnalysis.macd_hist >= 0 ? 'var(--color-buy)' : 'var(--color-sell)' }}>
+                            <div style={{ fontSize: '1.15rem', fontWeight: 700, color: selectedAnalysis.macd_hist >= 0 ? 'var(--color-buy)' : 'var(--color-sell)' }}>
                               {selectedAnalysis.macd_hist ? selectedAnalysis.macd_hist.toFixed(4) : 'N/A'}
                             </div>
-                            <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.25rem' }}>Histogram</div>
+                            <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Histogram</div>
                           </div>
                         </div>
                       </div>
-                    </div>
-
-                    {/* Detailed Analysis Explanation */}
-                    {selectedSignal.explanation && (
-                      <div style={{ background: 'rgba(59, 130, 246, 0.05)', borderLeft: '4px solid #3b82f6', borderRadius: '0 8px 8px 0', padding: '1rem', marginBottom: '1.5rem', lineHeight: '1.6', fontSize: '0.95rem' }}>
-                        <strong style={{ color: '#60a5fa', display: 'block', marginBottom: '0.4rem' }}>💡 Trading Rationale:</strong>
-                        <span style={{ color: 'var(--text-secondary)' }}>{selectedSignal.explanation}</span>
-                      </div>
-                    )}
-
-                    {/* Analysis Reasons */}
-                    <div>
-                      <h4 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '0.75rem' }}>Indicator Evaluation</h4>
-                      <ul className="reasons-list">
-                        {selectedSignal.reasons.map((reason, idx) => (
-                          <li key={idx}>{reason}</li>
-                        ))}
-                      </ul>
                     </div>
                   </div>
                 )}
               </div>
-
-              {/* Live Alerts Stream Feed */}
-              <div className="glass-panel">
-                <h3 className="panel-title">🚨 Live Signals & Alerts Feed</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '200px', overflowY: 'auto', paddingRight: '0.5rem' }}>
-                  {alerts.length === 0 ? (
-                    <div style={{ color: 'var(--text-secondary)', textAlign: 'center', fontSize: '0.9rem', padding: '1rem' }}>
-                      Scanning markets for active alerts...
-                    </div>
-                  ) : (
-                    alerts.map((al, idx) => (
-                      <div
-                        key={idx}
-                        style={{
-                          padding: '0.75rem 1rem',
-                          borderRadius: '8px',
-                          background: al.signal === 'BUY' ? 'rgba(16, 185, 129, 0.04)' : 'rgba(239, 68, 68, 0.04)',
-                          borderLeft: `4px solid ${al.signal === 'BUY' ? 'var(--color-buy)' : 'var(--color-sell)'}`,
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          fontSize: '0.9rem'
-                        }}
-                      >
-                        <div>
-                          <strong>{al.ticker}</strong>: {al.signal} signal triggered at <strong>Rs. {al.price.toFixed(2)}</strong>.
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
-                            Target Buy: Rs. {al.target_buy.toFixed(2)} | Target Sell: Rs. {al.target_sell.toFixed(2)} | SL: Rs. {al.stop_loss.toFixed(2)}
-                          </div>
-                        </div>
-                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{al.time}</div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
             </div>
-          </div>
-
-          {/* Live Market Recommendations */}
-          <div className="glass-panel" style={{ marginTop: '2rem' }}>
-            <h3 className="panel-title" style={{ fontSize: '1.15rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem', marginBottom: '1.25rem' }}>
-              🔥 Live Market Technical Highlights (Daily Recommendations)
-              <span style={{ fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-secondary)' }}>Source: psxtechnicalanalysis.com</span>
-            </h3>
-            {loadingRecs ? (
-              <div className="loader">
-                <div className="spinner"></div>
-              </div>
-            ) : (
-              <div className="recs-grid">
-                {/* Recommended to Buy Table */}
-                <div>
-                  <h4 style={{ color: 'var(--color-buy)', fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                    📈 Recommended to Buy (Strongest Uptrends)
-                  </h4>
-                  <div style={{ border: '1px solid var(--border-color)', borderRadius: '8px', overflow: 'hidden' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                      <thead>
-                        <tr style={{ background: '#f8fafc', borderBottom: '1px solid var(--border-color)', color: 'var(--text-primary)' }}>
-                          <th style={{ padding: '0.6rem 0.8rem', textAlign: 'left', fontWeight: 600 }}>Symbol</th>
-                          <th style={{ padding: '0.6rem 0.8rem', textAlign: 'right', fontWeight: 600 }}>Buy Strength</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {marketRecommendations.buy_recommendations.length === 0 ? (
-                          dynamicBuyRecs.length === 0 ? (
-                            <tr>
-                              <td colSpan="2" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No buy recommendations loaded today.</td>
-                            </tr>
-                          ) : (
-                            dynamicBuyRecs.map((item, idx) => (
-                              <tr
-                                key={idx}
-                                onClick={() => selectRecommendationSymbol(item.symbol)}
-                                style={{ borderBottom: '1px solid var(--border-color)', cursor: 'pointer', transition: 'background-color 0.2s' }}
-                                className="rec-row-hover"
-                              >
-                                <td style={{ padding: '0.6rem 0.8rem', fontWeight: 600, color: '#2563eb' }}>{item.symbol}</td>
-                                <td style={{ padding: '0.6rem 0.8rem', textAlign: 'right', fontWeight: 600, color: 'var(--color-buy)' }}>{item.strength}</td>
-                              </tr>
-                            ))
-                          )
-                        ) : (
-                          marketRecommendations.buy_recommendations.map((item, idx) => (
-                            <tr
-                              key={idx}
-                              onClick={() => selectRecommendationSymbol(item.symbol)}
-                              style={{ borderBottom: '1px solid var(--border-color)', cursor: 'pointer', transition: 'background-color 0.2s' }}
-                              className="rec-row-hover"
-                            >
-                              <td style={{ padding: '0.6rem 0.8rem', fontWeight: 600, color: '#2563eb' }}>{item.symbol}</td>
-                              <td style={{ padding: '0.6rem 0.8rem', textAlign: 'right', fontWeight: 600, color: 'var(--color-buy)' }}>{item.strength}</td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* Recommended to Sell Table */}
-                <div>
-                  <h4 style={{ color: 'var(--color-sell)', fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                    📉 Recommended to Sell (Bearish Trends)
-                  </h4>
-                  <div style={{ border: '1px solid var(--border-color)', borderRadius: '8px', overflow: 'hidden' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                      <thead>
-                        <tr style={{ background: '#f8fafc', borderBottom: '1px solid var(--border-color)', color: 'var(--text-primary)' }}>
-                          <th style={{ padding: '0.6rem 0.8rem', textAlign: 'left', fontWeight: 600 }}>Symbol</th>
-                          <th style={{ padding: '0.6rem 0.8rem', textAlign: 'right', fontWeight: 600 }}>Sell Strength</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {marketRecommendations.sell_recommendations.length === 0 ? (
-                          dynamicSellRecs.length === 0 ? (
-                            <tr>
-                              <td colSpan="2" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No sell recommendations loaded today.</td>
-                            </tr>
-                          ) : (
-                            dynamicSellRecs.map((item, idx) => (
-                              <tr
-                                key={idx}
-                                onClick={() => selectRecommendationSymbol(item.symbol)}
-                                style={{ borderBottom: '1px solid var(--border-color)', cursor: 'pointer', transition: 'background-color 0.2s' }}
-                                className="rec-row-hover"
-                              >
-                                <td style={{ padding: '0.6rem 0.8rem', fontWeight: 600, color: '#2563eb' }}>{item.symbol}</td>
-                                <td style={{ padding: '0.6rem 0.8rem', textAlign: 'right', fontWeight: 600, color: 'var(--color-sell)' }}>{item.strength}</td>
-                              </tr>
-                            ))
-                          )
-                        ) : (
-                          marketRecommendations.sell_recommendations.map((item, idx) => (
-                            <tr
-                              key={idx}
-                              onClick={() => selectRecommendationSymbol(item.symbol)}
-                              style={{ borderBottom: '1px solid var(--border-color)', cursor: 'pointer', transition: 'background-color 0.2s' }}
-                              className="rec-row-hover"
-                            >
-                              <td style={{ padding: '0.6rem 0.8rem', fontWeight: 600, color: '#2563eb' }}>{item.symbol}</td>
-                              <td style={{ padding: '0.6rem 0.8rem', textAlign: 'right', fontWeight: 600, color: 'var(--color-sell)' }}>{item.strength}</td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          )}
         </div>
       )}
 
