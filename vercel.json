@@ -15,8 +15,9 @@
     { "src": "/symbols", "dest": "main.py" },
     { "src": "/market-recommendations", "dest": "main.py" },
     { "src": "/send-alert", "dest": "main.py" },
+    { "src": "/health", "dest": "main.py" },
     { "src": "/telegram-config/(.*)", "dest": "main.py" },
     { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/frontend/dist/index.html" }
+    { "src": "/(.*)", "dest": "/dist/index.html" }
   ]
 }
