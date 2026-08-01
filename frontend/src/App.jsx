@@ -429,6 +429,15 @@ function App() {
 
   return (
     <div className="dashboard-container">
+      {/* Animated Motion Lines Background Grid */}
+      <div className="animated-bg-container">
+        <div className="animated-line-up" style={{ left: '10%', animationDelay: '0s' }}></div>
+        <div className="animated-line-down" style={{ left: '30%', animationDelay: '2s' }}></div>
+        <div className="animated-line-up" style={{ left: '50%', animationDelay: '4s' }}></div>
+        <div className="animated-line-down" style={{ left: '70%', animationDelay: '1s' }}></div>
+        <div className="animated-line-up" style={{ left: '90%', animationDelay: '3s' }}></div>
+      </div>
+
       {/* Toast Notifications Container */}
       <div className="toast-container">
         {toasts.map((toast) => (
@@ -456,7 +465,7 @@ function App() {
           <span style={{ fontSize: '2rem' }}>📈</span>
           <h1 style={{ margin: 0 }}>PSX-Signal</h1>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <button
             onClick={() => setCurrentScreen('dashboard')}
             style={{
@@ -491,6 +500,22 @@ function App() {
               📊 {selectedTicker.replace('.KA', '')} Analytics
             </button>
           )}
+          <button
+            onClick={() => setCurrentScreen('telegram')}
+            style={{
+              background: currentScreen === 'telegram' ? 'rgba(255, 255, 255, 0.25)' : 'none',
+              border: 'none',
+              color: '#ffffff',
+              padding: '0.5rem 1rem',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontFamily: 'var(--font-family)',
+              fontSize: '0.85rem'
+            }}
+          >
+            ✈️ Telegram Bot Config
+          </button>
           <div className="market-badge">🟢 Live</div>
         </div>
       </header>
@@ -558,7 +583,7 @@ function App() {
                       return (
                         <div
                           key={ticker}
-                          className={`ticker-item ${selectedTicker === ticker ? 'active' : ''}`}
+                          className={`ticker-item premium-hover-card ${selectedTicker === ticker ? 'active' : ''}`}
                           onClick={() => {
                             setSelectedTicker(ticker);
                             setCurrentScreen('details'); // Navigate to details on click
@@ -703,7 +728,7 @@ function App() {
                 )}
               </div>
             </div>
-          ) : (
+          ) : currentScreen === 'details' ? (
             /* DEDICATED DETAILS SCREEN FOR A SELECTED STOCK */
             <div className="details-panel-wrapper">
               <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -965,7 +990,90 @@ function App() {
                 )}
               </div>
             </div>
-          )}
+          ) : currentScreen === 'telegram' ? (
+            /* TELEGRAM BOT SETTINGS SCREEN */
+            <div className="details-panel-wrapper">
+              <div className="glass-panel" style={{ padding: '2rem' }}>
+                <h3 className="panel-title" style={{ fontSize: '1.25rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem', marginBottom: '1.5rem' }}>
+                  ✈️ Telegram Bot Alert configuration
+                </h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1.5rem', lineHeight: '1.5' }}>
+                  Configure your Telegram Bot credentials to receive instant real-time alerts. Alerts are automatically dispatched when the algorithm identifies a verified <strong>BUY</strong> or <strong>SELL</strong> confluence setup.
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', maxWidth: '500px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
+                      Bot Token
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
+                      value={telegramToken}
+                      onChange={(e) => setTelegramToken(e.target.value)}
+                      className="form-input"
+                      style={{ padding: '0.75rem', borderRadius: '8px' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
+                      Chat ID
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. -100123456789 or 987654321"
+                      value={telegramChatId}
+                      onChange={(e) => setTelegramChatId(e.target.value)}
+                      className="form-input"
+                      style={{ padding: '0.75rem', borderRadius: '8px' }}
+                    />
+                  </div>
+
+                  {tgStatus && (
+                    <div style={{
+                      padding: '0.75rem',
+                      borderRadius: '8px',
+                      background: tgStatus.includes('success') ? 'rgba(16, 185, 129, 0.05)' : 'rgba(37, 99, 235, 0.05)',
+                      border: `1px solid ${tgStatus.includes('success') ? 'rgba(16, 185, 129, 0.15)' : 'rgba(37, 99, 235, 0.15)'}`,
+                      color: tgStatus.includes('success') ? 'var(--color-buy)' : 'var(--text-primary)',
+                      fontSize: '0.85rem',
+                      fontWeight: 500
+                    }}>
+                      {tgStatus}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
+                    <button
+                      onClick={() => {
+                        if (selectedSignal) {
+                          sendTelegramAlertHandler(selectedSignal);
+                        } else {
+                          setTgStatus('Select a security to send test alert.');
+                        }
+                      }}
+                      className="config-button"
+                      style={{ padding: '0.75rem', borderRadius: '8px' }}
+                    >
+                      🧪 Send Test Alert
+                    </button>
+                    <button
+                      onClick={() => {
+                        localStorage.setItem('tg_token', telegramToken);
+                        localStorage.setItem('tg_chat_id', telegramChatId);
+                        setTgStatus('Configuration saved locally!');
+                      }}
+                      className="config-button"
+                      style={{ padding: '0.75rem', borderRadius: '8px', background: '#10b981' }}
+                    >
+                      💾 Save Config
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
 

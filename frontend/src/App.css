@@ -735,3 +735,84 @@ body {
 .rec-row-hover:hover {
   background-color: #f1f5f9;
 }
+
+/* Premium Motion Grid Animations */
+@keyframes moveLineUp {
+  0% { transform: translateY(100%); opacity: 0; }
+  50% { opacity: 0.4; }
+  100% { transform: translateY(-100%); opacity: 0; }
+}
+
+@keyframes moveLineDown {
+  0% { transform: translateY(-100%); opacity: 0; }
+  50% { opacity: 0.4; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
+
+.animated-bg-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: -1;
+  overflow: hidden;
+}
+
+.animated-line-up {
+  position: absolute;
+  width: 1px;
+  height: 150px;
+  background: linear-gradient(to top, transparent, rgba(16, 185, 129, 0.15), transparent);
+  animation: moveLineUp 12s infinite linear;
+}
+
+.animated-line-down {
+  position: absolute;
+  width: 1px;
+  height: 150px;
+  background: linear-gradient(to bottom, transparent, rgba(59, 130, 246, 0.15), transparent);
+  animation: moveLineDown 15s infinite linear;
+}
+
+/* Premium Card hover lifts and details drops */
+.premium-hover-card {
+  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.premium-hover-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background: linear-gradient(90deg, #10b981, #3b82f6);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.premium-hover-card:hover {
+  transform: translateY(-6px) scale(1.01);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.premium-hover-card:hover::before {
+  opacity: 1;
+}
+
+/* Interactive list tickers hover translation */
+.ticker-item-premium {
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ticker-item-premium:hover {
+  transform: translateX(4px);
+  border-color: rgba(59, 130, 246, 0.3);
+  background: rgba(59, 130, 246, 0.02);
+}
+
