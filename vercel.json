@@ -2,14 +2,57 @@
   "version": 2,
   "builds": [
     {
+      "src": "frontend/package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
+      }
+    },
+    {
       "src": "main.py",
       "use": "@vercel/python"
     }
   ],
   "routes": [
     {
-      "src": "/(.*)",
+      "src": "/api/(.*)",
       "dest": "main.py"
+    },
+    {
+      "src": "/tickers",
+      "dest": "main.py"
+    },
+    {
+      "src": "/analyze/(.*)",
+      "dest": "main.py"
+    },
+    {
+      "src": "/signal/(.*)",
+      "dest": "main.py"
+    },
+    {
+      "src": "/signals",
+      "dest": "main.py"
+    },
+    {
+      "src": "/chart/(.*)",
+      "dest": "main.py"
+    },
+    {
+      "src": "/symbols",
+      "dest": "main.py"
+    },
+    {
+      "src": "/market-recommendations",
+      "dest": "main.py"
+    },
+    {
+      "src": "/telegram-config/(.*)",
+      "dest": "main.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "frontend/dist/$1"
     }
   ]
 }

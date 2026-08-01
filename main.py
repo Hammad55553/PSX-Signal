@@ -1,5 +1,8 @@
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
 from typing import List, Dict, Any
 from config import DEFAULT_TICKERS
 from services.stock_service import get_stock_analysis
@@ -20,17 +23,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Serve React build (static files) from /frontend/dist
+FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+if os.path.exists(FRONTEND_DIST):
+    app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="assets")
+
 @app.get("/")
 def read_root():
+    # Serve React app index.html if the build exists
+    index_file = os.path.join(FRONTEND_DIST, "index.html")
+    if os.path.exists(index_file):
+        return FileResponse(index_file)
     return {
         "status": "online",
-        "message": "Welcome to the PSX Trading Bot API backend!",
-        "endpoints": {
-            "/tickers": "Get supported PSX tickers",
-            "/analyze/{ticker}": "Get detailed technical analysis for a ticker",
-            "/signal/{ticker}": "Get BUY/SELL/HOLD signal recommendation for a ticker",
-            "/signals/all": "Get signals for all preconfigured tickers"
-        }
+        "message": "PSX Trading Bot API — deploy frontend build to frontend/dist"
     }
 
 @app.get("/tickers", response_model=List[str])
