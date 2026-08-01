@@ -22,5 +22,6 @@
     { "src": "/favicon.svg", "dest": "dist/favicon.svg" },
     { "src": "/icons.svg", "dest": "dist/icons.svg" },
     { "src": "/(.*)", "dest": "dist/index.html" }
-  ]
+  ],
+  "cleanUrls": true
 }
