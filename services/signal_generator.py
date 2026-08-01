@@ -39,7 +39,7 @@ def generate_trade_signal(analysis: Dict[str, Any]) -> Dict[str, Any]:
 
     # 1. Evaluate indicators for Spot Market Rules
     if rsi is not None and rsi <= 35:
-        # Stock is heavily oversold. Never SELL at the bottom in Spot trading!
+        # Stock is heavily oversold.
         signal = "BUY" if (is_at_support or rsi < 30) else "HOLD"
         buy_score = 3.0
         if rsi < 30:
@@ -58,6 +58,7 @@ def generate_trade_signal(analysis: Dict[str, Any]) -> Dict[str, Any]:
             
     else:
         # Neutral RSI Zone (35 to 65) - base signals on trend and momentum
+        # More balanced checks: Only trigger absolute SELL when BOTH SMA trend AND MACD momentum are bearish.
         if is_bullish_trend and is_bullish_momentum:
             signal = "BUY"
             buy_score = 2.5
@@ -71,6 +72,11 @@ def generate_trade_signal(analysis: Dict[str, Any]) -> Dict[str, Any]:
                 signal = "SELL"
                 sell_score = 2.5
                 reasons.append("Bearish trend and negative momentum. Sell/Exit to protect spot capital.")
+        elif is_bullish_momentum:
+            # Positive momentum but neutral trend
+            signal = "BUY"
+            buy_score = 1.5
+            reasons.append("MACD histogram is expanding upwards. Momentum is turning positive.")
         else:
             signal = "HOLD"
             reasons.append("Price moving sideways within neutral bands. Hold and wait for trend breakout.")
