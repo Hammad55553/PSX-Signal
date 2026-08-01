@@ -923,9 +923,24 @@ function App() {
                       </thead>
                       <tbody>
                         {marketRecommendations.buy_recommendations.length === 0 ? (
-                          <tr>
-                            <td colSpan="2" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No buy recommendations loaded today.</td>
-                          </tr>
+                          // Fallback to dynamic live buy signals
+                          dynamicBuyRecs.length === 0 ? (
+                            <tr>
+                              <td colSpan="2" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No buy recommendations loaded today.</td>
+                            </tr>
+                          ) : (
+                            dynamicBuyRecs.map((item, idx) => (
+                              <tr
+                                key={idx}
+                                onClick={() => selectRecommendationSymbol(item.symbol)}
+                                style={{ borderBottom: '1px solid var(--border-color)', cursor: 'pointer', transition: 'background-color 0.2s' }}
+                                className="rec-row-hover"
+                              >
+                                <td style={{ padding: '0.6rem 0.8rem', fontWeight: 600, color: '#2563eb' }}>{item.symbol}</td>
+                                <td style={{ padding: '0.6rem 0.8rem', textAlign: 'right', fontWeight: 600, color: 'var(--color-buy)' }}>{item.strength}</td>
+                              </tr>
+                            ))
+                          )
                         ) : (
                           marketRecommendations.buy_recommendations.map((item, idx) => (
                             <tr
@@ -959,9 +974,24 @@ function App() {
                       </thead>
                       <tbody>
                         {marketRecommendations.sell_recommendations.length === 0 ? (
-                          <tr>
-                            <td colSpan="2" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No sell recommendations loaded today.</td>
-                          </tr>
+                          // Fallback to dynamic live sell signals
+                          dynamicSellRecs.length === 0 ? (
+                            <tr>
+                              <td colSpan="2" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No sell recommendations loaded today.</td>
+                            </tr>
+                          ) : (
+                            dynamicSellRecs.map((item, idx) => (
+                              <tr
+                                key={idx}
+                                onClick={() => selectRecommendationSymbol(item.symbol)}
+                                style={{ borderBottom: '1px solid var(--border-color)', cursor: 'pointer', transition: 'background-color 0.2s' }}
+                                className="rec-row-hover"
+                              >
+                                <td style={{ padding: '0.6rem 0.8rem', fontWeight: 600, color: '#2563eb' }}>{item.symbol}</td>
+                                <td style={{ padding: '0.6rem 0.8rem', textAlign: 'right', fontWeight: 600, color: 'var(--color-sell)' }}>{item.strength}</td>
+                              </tr>
+                            ))
+                          )
                         ) : (
                           marketRecommendations.sell_recommendations.map((item, idx) => (
                             <tr
