@@ -67,15 +67,44 @@ def calculate_macd(series: pd.Series, fast_period: int = 12, slow_period: int = 
         "hist": macd_hist
     }
 
+def fetch_ek_history(symbol: str, days: int = 90) -> pd.DataFrame:
+    """Fetch daily historical data from EK Global Capital API as a pandas DataFrame"""
+    import time
+    clean_sym = symbol.replace('.KA', '').upper()
+    to_time = int(time.time())
+    from_time = to_time - (days * 24 * 60 * 60)
+    url = f"https://api.ekglobalcapital.com/tvfeed/history?symbol={clean_sym}&resolution=D&from={from_time}&to={to_time}"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+    }
+    try:
+        res = requests.get(url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            if data.get('s') == 'ok' and 't' in data:
+                index = pd.to_datetime(data['t'], unit='s')
+                df = pd.DataFrame({
+                    'Open': data['o'],
+                    'High': data['h'],
+                    'Low': data['l'],
+                    'Close': data['c'],
+                    'Volume': data['v']
+                }, index=index)
+                return df
+    except Exception as e:
+        print(f"EK API fetch error for {symbol}: {e}")
+    return pd.DataFrame()
+
+
 def get_stock_analysis(ticker: str, period: str = "3mo") -> Dict[str, Any]:
-    """Fetch history from yfinance, override with live PSX scraped quotes, and calculate indicators"""
+    """Fetch history from yfinance or EK proxy, override with live PSX scraped quotes, and calculate indicators"""
     try:
         # Ensure .KA suffix
         formatted = ticker.upper()
         if not formatted.endswith('.KA'):
             formatted = f"{formatted}.KA"
 
-        # Try multiple periods if short period returns no data
+        # Try multiple periods if short period returns no data from yfinance
         df = pd.DataFrame()
         for try_period in [period, "6mo", "1y"]:
             stock = yf.Ticker(formatted)
@@ -83,22 +112,25 @@ def get_stock_analysis(ticker: str, period: str = "3mo") -> Dict[str, Any]:
             if not df.empty:
                 break
 
-        # If yfinance completely fails, try building a synthetic frame from PSX scraper
+        # Fallback to EK Global Capital historical data API if yfinance fails
+        if df.empty:
+            df = fetch_ek_history(ticker, days=90)
+
+        # Scrape the latest live price
         live = scrape_live_price(ticker)
         
         if df.empty:
             if not live:
                 # Nothing works — report a clear error
-                return {"error": f"No data available for '{ticker.replace('.KA','')}'. The symbol may be delisted, invalid, or not listed on Yahoo Finance with .KA suffix."}
+                return {"error": f"No data available for '{ticker.replace('.KA','')}'. The symbol may be delisted, invalid, or not listed on Yahoo Finance / EK API."}
             
-            # Build a minimal synthetic 2-row dataframe from live PSX data so indicators still calculate
+            # Build a minimal synthetic flat dataframe from live PSX data so indicators still calculate without fake trends
             price = live["price"]
-            import numpy as np
-            synthetic_prices = np.linspace(price * 0.97, price, 60).tolist()
+            synthetic_prices = [price] * 60
             df = pd.DataFrame({
                 "Close": synthetic_prices,
-                "High": [p * 1.005 for p in synthetic_prices],
-                "Low": [p * 0.995 for p in synthetic_prices],
+                "High": [price] * 60,
+                "Low": [price] * 60,
                 "Volume": [100000] * 60,
                 "Open": synthetic_prices,
             })

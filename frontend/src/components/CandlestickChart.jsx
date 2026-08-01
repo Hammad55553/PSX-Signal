@@ -32,7 +32,7 @@ export const CandlestickChart = ({ chartData, loadingChart, maxVal, minVal }) =>
   const getY = (val) => padding + (1 - (val - minVal) / diff) * chartHeight;
 
   return (
-    <div className="sparkline-container" style={{ background: '#ffffff', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '1.25rem', marginBottom: '2rem', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+    <div className="sparkline-container" style={{ background: '#ffffff', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '1.25rem', marginBottom: '2rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', fontSize: '0.85rem', flexWrap: 'wrap', gap: '0.5rem' }}>
         <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>🕯️ Candlestick Trading Chart (Daily History)</span>
         

@@ -461,61 +461,25 @@ function App() {
 
       {/* Premium Header & Navigation */}
       <header className="header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer' }} onClick={() => setCurrentScreen('dashboard')}>
-          <span style={{ fontSize: '2rem' }}>📈</span>
-          <h1 style={{ margin: 0 }}>PSX-Signal</h1>
+        <div className="header-logo" onClick={() => setCurrentScreen('dashboard')}>
+          <span>📈</span>
+          <h1 style={{ margin: 0, fontSize: 'inherit' }}>PSX-Signal</h1>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        <div className="header-nav">
           <button
             onClick={() => setCurrentScreen('dashboard')}
-            style={{
-              background: currentScreen === 'dashboard' ? 'rgba(255, 255, 255, 0.25)' : 'none',
-              border: 'none',
-              color: '#ffffff',
-              padding: '0.5rem 1rem',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontWeight: 600,
-              fontFamily: 'var(--font-family)',
-              fontSize: '0.85rem'
-            }}
+            className={`header-nav-btn ${currentScreen === 'dashboard' ? 'active' : ''}`}
           >
             🏠 Market Overview
           </button>
           {selectedTicker && (
             <button
               onClick={() => setCurrentScreen('details')}
-              style={{
-                background: currentScreen === 'details' ? 'rgba(255, 255, 255, 0.25)' : 'none',
-                border: 'none',
-                color: '#ffffff',
-                padding: '0.5rem 1rem',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontFamily: 'var(--font-family)',
-                fontSize: '0.85rem'
-              }}
+              className={`header-nav-btn ${currentScreen === 'details' ? 'active' : ''}`}
             >
               📊 {selectedTicker.replace('.KA', '')} Analytics
             </button>
           )}
-          <button
-            onClick={() => setCurrentScreen('telegram')}
-            style={{
-              background: currentScreen === 'telegram' ? 'rgba(255, 255, 255, 0.25)' : 'none',
-              border: 'none',
-              color: '#ffffff',
-              padding: '0.5rem 1rem',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontWeight: 600,
-              fontFamily: 'var(--font-family)',
-              fontSize: '0.85rem'
-            }}
-          >
-            ✈️ Telegram Bot Config
-          </button>
           <div className="market-badge">🟢 Live</div>
         </div>
       </header>
