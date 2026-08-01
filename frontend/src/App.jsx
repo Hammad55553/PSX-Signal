@@ -533,10 +533,15 @@ function App() {
         ))}
       </div>
 
-      {/* Header */}
+      {/* Premium Header & Navigation */}
       <header className="header">
-        <h1>🚀 PSX Trading Bot Intelligence Dashboard</h1>
-        <div className="market-badge">Pakistan Stock Exchange</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <span style={{ fontSize: '2rem' }}>📈</span>
+          <h1 style={{ margin: 0 }}>PSX-Signal</h1>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+          <div className="market-badge">🟢 Live Market Portal</div>
+        </div>
       </header>
 
       {error ? (
@@ -979,6 +984,21 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Modern Premium Footer */}
+      <footer className="footer">
+        <p style={{ fontWeight: 600, color: 'var(--text-primary)' }}>📈 PSX-Signal — Pakistan Stock Exchange Technical Analytics</p>
+        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.4rem' }}>
+          Data is scraped live from DPS PSX and PSX Technical Analysis. Past performance is not indicative of future results.
+        </p>
+        <div className="footer-links">
+          <a href="https://dps.psx.com.pk" target="_blank" rel="noopener noreferrer" className="footer-link">PSX Data Portal</a>
+          <span>•</span>
+          <a href="https://psxtechnicalanalysis.com" target="_blank" rel="noopener noreferrer" className="footer-link">Technical Analysis Source</a>
+          <span>•</span>
+          <a href="#" className="footer-link">Privacy Policy</a>
+        </div>
+      </footer>
     </div>
   );
 }
