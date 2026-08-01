@@ -723,7 +723,7 @@ function App() {
                     <h4 style={{ fontSize: '1.05rem', fontWeight: 600, color: '#60a5fa', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       🎯 Precision Trading Targets
                     </h4>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', textAlign: 'center' }}>
+                    <div className="trading-targets-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', textAlign: 'center' }}>
                       <div style={{ background: 'rgba(16, 185, 129, 0.05)', padding: '0.75rem', borderRadius: '8px', border: '1px solid rgba(16, 185, 129, 0.15)' }}>
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Target Buy Price</div>
                         <div style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--color-buy)', marginTop: '0.25rem' }}>
@@ -809,7 +809,7 @@ function App() {
                     {/* MACD */}
                     <div className="indicator-card" style={{ gridColumn: 'span 3' }}>
                       <div className="indicator-card-title">MACD (12, 26, 9)</div>
-                      <div style={{ display: 'flex', justifyContent: 'space-around', alignItems: 'center', marginTop: '0.5rem' }}>
+                      <div className="macd-inner" style={{ display: 'flex', justifyContent: 'space-around', alignItems: 'center', marginTop: '0.5rem' }}>
                         <div style={{ textAlign: 'center' }}>
                           <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#3b82f6' }}>
                             {selectedAnalysis.macd ? selectedAnalysis.macd.toFixed(4) : 'N/A'}
@@ -902,7 +902,7 @@ function App() {
               <div className="spinner"></div>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '2rem' }}>
+            <div className="recs-grid">
               {/* Recommended to Buy Table */}
               <div>
                 <h4 style={{ color: 'var(--color-buy)', fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
