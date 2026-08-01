@@ -24,7 +24,9 @@ app.add_middleware(
 )
 
 # Serve React build (static files) from /frontend/dist
-FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+# Use absolute path resolving from the script file location
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FRONTEND_DIST = os.path.join(BASE_DIR, "frontend", "dist")
 
 if os.path.exists(FRONTEND_DIST):
     # Mount /assets for Vite-compiled JS/CSS bundles
