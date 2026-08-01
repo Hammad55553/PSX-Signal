@@ -8,10 +8,6 @@
   ],
   "routes": [
     {
-      "src": "/assets/(.*)",
-      "dest": "frontend/dist/assets/$1"
-    },
-    {
       "src": "/tickers",
       "dest": "main.py"
     },
@@ -48,8 +44,16 @@
       "dest": "main.py"
     },
     {
+      "src": "/assets/(.*)",
+      "dest": "frontend/dist/assets/$1"
+    },
+    {
+      "src": "/favicon.svg",
+      "dest": "frontend/dist/favicon.svg"
+    },
+    {
       "src": "/(.*)",
-      "dest": "main.py"
+      "dest": "frontend/dist/$1"
     }
   ]
 }
