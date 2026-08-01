@@ -7,21 +7,45 @@
     }
   ],
   "routes": [
-    { "src": "/tickers", "dest": "main.py" },
-    { "src": "/analyze/(.*)", "dest": "main.py" },
-    { "src": "/signal/(.*)", "dest": "main.py" },
-    { "src": "/signals", "dest": "main.py" },
-    { "src": "/chart/(.*)", "dest": "main.py" },
-    { "src": "/symbols", "dest": "main.py" },
-    { "src": "/market-recommendations", "dest": "main.py" },
-    { "src": "/send-alert", "dest": "main.py" },
-    { "src": "/health", "dest": "main.py" },
-    { "src": "/telegram-config/(.*)", "dest": "main.py" },
-    { "handle": "filesystem" },
-    { "src": "/assets/(.*)", "dest": "dist/assets/$1" },
-    { "src": "/favicon.svg", "dest": "dist/favicon.svg" },
-    { "src": "/icons.svg", "dest": "dist/icons.svg" },
-    { "src": "/(.*)", "dest": "dist/index.html" }
-  ],
-  "cleanUrls": true
+    {
+      "src": "/tickers",
+      "dest": "main.py"
+    },
+    {
+      "src": "/analyze/(.*)",
+      "dest": "main.py"
+    },
+    {
+      "src": "/signal/(.*)",
+      "dest": "main.py"
+    },
+    {
+      "src": "/signals",
+      "dest": "main.py"
+    },
+    {
+      "src": "/chart/(.*)",
+      "dest": "main.py"
+    },
+    {
+      "src": "/symbols",
+      "dest": "main.py"
+    },
+    {
+      "src": "/market-recommendations",
+      "dest": "main.py"
+    },
+    {
+      "src": "/telegram-config/(.*)",
+      "dest": "main.py"
+    },
+    {
+      "src": "/ws/(.*)",
+      "dest": "main.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "main.py"
+    }
+  ]
 }

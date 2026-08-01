@@ -1,5 +1,8 @@
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
 from typing import List, Dict, Any
 from config import DEFAULT_TICKERS
 from services.stock_service import get_stock_analysis
@@ -11,7 +14,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Enable CORS so the React frontend (on any domain) can call the API
+# Enable CORS for React Native and frontend apps
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,10 +23,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/health")
-def health_check():
-    """API health check — frontend is served by Vercel static hosting"""
-    return {"status": "online", "api": "PSX Trading Bot v1.0"}
+# Serve React build (static files) from /frontend/dist
+FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+
+if os.path.exists(FRONTEND_DIST):
+    # Mount /assets for Vite-compiled JS/CSS bundles
+    assets_dir = os.path.join(FRONTEND_DIST, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+@app.get("/favicon.svg")
+def favicon():
+    f = os.path.join(FRONTEND_DIST, "favicon.svg")
+    return FileResponse(f) if os.path.exists(f) else {"error": "not found"}
+
+@app.get("/icons.svg")
+def icons():
+    f = os.path.join(FRONTEND_DIST, "icons.svg")
+    return FileResponse(f) if os.path.exists(f) else {"error": "not found"}
+
+@app.get("/")
+def read_root():
+    # Serve React SPA index.html
+    index_file = os.path.join(FRONTEND_DIST, "index.html")
+    if os.path.exists(index_file):
+        return FileResponse(index_file, media_type="text/html")
+    return {
+        "status": "online",
+        "message": "PSX Trading Bot API — deploy frontend build to frontend/dist"
+    }
 
 @app.get("/tickers", response_model=List[str])
 def get_tickers():
@@ -219,6 +247,3 @@ def get_market_recommendations():
     except Exception as e:
         print(f"Error scraping market recommendations: {e}")
     return {"buy_recommendations": [], "sell_recommendations": []}
-
-
-
