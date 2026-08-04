@@ -126,16 +126,25 @@ def fetch_yf_history(symbol: str, period: str = "2y") -> pd.DataFrame:
 
 
 def get_history(ticker: str, period: str = "2y") -> Tuple[pd.DataFrame, str]:
-    """Best available daily history. Returns (df, source_name)."""
-    df = fetch_yf_history(ticker, period)
-    if len(df) >= MIN_BARS:
-        return df, "yahoo"
+    """Best available daily history. Returns (df, source_name).
 
+    EK Global goes first. Yahoo Finance is well known to throttle or flat-out
+    block requests from cloud/datacenter IP ranges (AWS, Vercel, ...) — it
+    works fine from a home IP but silently failed or stalled in production,
+    burning most of the serverless function's time budget before EK Global
+    even got a turn. EK has no such block and answers in a small, bounded
+    window, so it belongs first; Yahoo is now just the fallback for whatever
+    EK doesn't carry.
+    """
     ek = fetch_ek_history_best(ticker)
-    # Keep whichever source gave us more usable bars
-    if len(ek) > len(df):
+    if len(ek) >= MIN_BARS:
         return ek, "ekglobal"
-    return df, ("yahoo" if not df.empty else "none")
+
+    df = fetch_yf_history(ticker, period)
+    # Keep whichever source gave us more usable bars
+    if len(df) > len(ek):
+        return df, "yahoo"
+    return ek, ("ekglobal" if not ek.empty else "none")
 
 
 def get_enriched(ticker: str, period: str = "2y") -> Dict[str, Any]:
