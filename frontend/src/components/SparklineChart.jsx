@@ -1,129 +1,139 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createChart, AreaSeries, CrosshairMode } from 'lightweight-charts';
 
-export const SparklineChart = ({ chartData, maxPrice, minPrice, chartColor, chartGradientId, width, height }) => {
-  const [hoveredPoint, setHoveredPoint] = useState(null);
+/**
+ * Area view of the close price, on the same charting engine as the candles so
+ * the two tabs share crosshair behaviour, scales and theming.
+ */
 
-  if (!chartData || chartData.length === 0) {
-    return (
-      <div className="chart-empty" style={{ height: '150px', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '0.85rem', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.01)', border: '1px dashed var(--border-color)', borderRadius: '12px' }}>
-        No intraday chart data available.
-      </div>
-    );
-  }
+/** Same outlier guard as the candle chart — one bad bar must not set the scale. */
+function sanitize(raw) {
+  const closes = raw.map((d) => d.close).filter((c) => c > 0).sort((a, b) => a - b);
+  if (closes.length === 0) return [];
+  const median = closes[Math.floor(closes.length / 2)];
+  return raw.filter(
+    (d) => Number.isFinite(d.close) && d.close >= median / 5 && d.close <= median * 5,
+  );
+}
 
-  // Slice last 40 candles for clean representation
-  const activeData = chartData.slice(-40);
-  const prices = activeData.map(d => d.close);
-  const localMax = Math.max(...prices);
-  const localMin = Math.min(...prices);
-  const priceDiff = localMax - localMin || 1;
-  
-  const padding = 15;
-  const coordinates = activeData.map((p, idx) => {
-    const x = padding + (idx / (activeData.length - 1)) * (width - padding * 2);
-    const y = padding + (1 - (p.close - localMin) / priceDiff) * (height - padding * 2);
-    return { x, y, price: p.close, index: idx };
-  });
+export const SparklineChart = ({ chartData, loading = false }) => {
+  const holderRef = useRef(null);
+  const chartRef = useRef(null);
+  const seriesRef = useRef(null);
+  const [readout, setReadout] = useState(null);
 
-  const linePointsStr = coordinates.map(c => `${c.x},${c.y}`).join(' ');
-  const areaPathStr = `M ${coordinates[0].x} ${height} ` +
-    coordinates.map(c => `L ${c.x} ${c.y}`).join(' ') +
-    ` L ${coordinates[coordinates.length - 1].x} ${height} Z`;
+  const data = useMemo(() => {
+    if (!chartData || chartData.length < 2) return [];
+    return sanitize(chartData).slice(-90);
+  }, [chartData]);
 
-  const handleMouseMove = (e) => {
-    const svgRect = e.currentTarget.getBoundingClientRect();
-    const mouseX = e.clientX - svgRect.left;
-    
-    // Find closest coordinate point by X distance
-    let closest = coordinates[0];
-    let minDist = Math.abs(coordinates[0].x - (mouseX / svgRect.width) * width);
-    
-    coordinates.forEach(c => {
-      const dist = Math.abs(c.x - (mouseX / svgRect.width) * width);
-      if (dist < minDist) {
-        minDist = dist;
-        closest = c;
-      }
+  const up = data.length > 1 && data[data.length - 1].close >= data[0].close;
+
+  useEffect(() => {
+    if (!holderRef.current) return undefined;
+    const cs = getComputedStyle(document.documentElement);
+    const v = (n, f) => (cs.getPropertyValue(n) || f).trim();
+    const text = v('--text-muted', '#94a3b8');
+    const grid = v('--border-color', '#e5e9f0');
+    const accent = v('--accent', '#6366f1');
+
+    const chart = createChart(holderRef.current, {
+      autoSize: true,
+      layout: {
+        background: { color: 'transparent' },
+        textColor: text,
+        fontFamily: getComputedStyle(document.body).fontFamily,
+        attributionLogo: false,
+      },
+      grid: {
+        vertLines: { color: grid, style: 1 },
+        horzLines: { color: grid, style: 1 },
+      },
+      rightPriceScale: { borderColor: grid, scaleMargins: { top: 0.12, bottom: 0.12 } },
+      timeScale: { borderColor: grid, timeVisible: false, rightOffset: 2 },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: text, width: 1, style: 3, labelBackgroundColor: accent },
+        horzLine: { color: text, width: 1, style: 3, labelBackgroundColor: accent },
+      },
     });
 
-    setHoveredPoint(closest);
-  };
+    const series = chart.addSeries(AreaSeries, { lineWidth: 2 });
 
-  const handleMouseLeave = () => {
-    setHoveredPoint(null);
-  };
+    chart.subscribeCrosshairMove((param) => {
+      const point = param.seriesData?.get(series);
+      setReadout(point ?? null);
+    });
+
+    chartRef.current = chart;
+    seriesRef.current = series;
+    return () => {
+      chart.remove();
+      chartRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!seriesRef.current || data.length === 0) return;
+    const cs = getComputedStyle(document.documentElement);
+    const v = (n, f) => (cs.getPropertyValue(n) || f).trim();
+    const tone = up ? v('--color-buy', '#10b981') : v('--color-sell', '#ef4444');
+
+    seriesRef.current.applyOptions({
+      lineColor: tone,
+      topColor: `${tone}55`,
+      bottomColor: `${tone}05`,
+    });
+    seriesRef.current.setData(
+      data.map((d) => ({ time: Math.floor(d.time), value: d.close })),
+    );
+    chartRef.current.timeScale().fitContent();
+  }, [data, up]);
+
+  // Same rule as the candle chart: the container stays mounted so the
+  // create-once effect always has a real element to render into.
+  const busy = loading;
+  const noData = !loading && data.length < 2;
+
+  const changePct = data.length > 1
+    ? ((data[data.length - 1].close - data[0].close) / data[0].close) * 100
+    : 0;
+  const shown = readout?.value ?? data[data.length - 1]?.close;
 
   return (
-    <div className="sparkline-container" style={{ background: '#ffffff', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '1.25rem', marginBottom: '2rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
-        <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>📈 Live Intraday Sparkline Area Chart</span>
-        {hoveredPoint ? (
-          <span style={{ background: '#3b82f6', color: '#ffffff', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600 }}>
-            Hover Price: Rs. {hoveredPoint.price.toFixed(2)}
+    <div className="chart-card">
+      <div className="chart-header">
+        <div className="chart-title-block">
+          <span className="chart-title">
+            Close price{data.length ? ` · ${data.length} sessions` : ''}
           </span>
-        ) : (
-          <span style={{ background: '#f1f5f9', border: '1px solid rgba(15, 23, 42, 0.08)', color: 'var(--text-secondary)', padding: '0.25rem 0.6rem', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 600 }}>
-            High: Rs. {localMax.toFixed(2)} | Low: Rs. {localMin.toFixed(2)}
-          </span>
+          {data.length > 1 && (
+            <span className={`chart-change ${up ? 'up' : 'down'}`}>
+              {up ? '▲' : '▼'} {Math.abs(changePct).toFixed(2)}%
+            </span>
+          )}
+        </div>
+        {shown != null && (
+          <div className="spark-readout">
+            <strong>Rs. {shown.toFixed(2)}</strong>
+          </div>
         )}
       </div>
 
-      <svg 
-        viewBox={`0 0 ${width} ${height}`} 
-        style={{ width: '100%', height: 'auto', display: 'block', overflow: 'visible', cursor: 'crosshair' }}
-        onMouseMove={handleMouseMove}
-        onMouseLeave={handleMouseLeave}
-      >
-        <defs>
-          <linearGradient id="greenGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#10b981" stopOpacity="0.25" />
-            <stop offset="100%" stopColor="#10b981" stopOpacity="0.0" />
-          </linearGradient>
-          <linearGradient id="redGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#ef4444" stopOpacity="0.25" />
-            <stop offset="100%" stopColor="#ef4444" stopOpacity="0.0" />
-          </linearGradient>
-        </defs>
-        
-        {/* Background Grid Lines */}
-        <line x1={padding} y1={padding} x2={width - padding} y2={padding} stroke="rgba(0,0,0,0.05)" strokeDasharray="4 4" />
-        <line x1={padding} y1={height / 2} x2={width - padding} y2={height / 2} stroke="rgba(0,0,0,0.05)" strokeDasharray="4 4" />
-        <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="rgba(0,0,0,0.05)" strokeDasharray="4 4" />
-
-        <path d={areaPathStr} fill={`url(#${chartGradientId})`} />
-        
-        <polyline
-          fill="none"
-          stroke={chartColor}
-          strokeWidth="3"
-          points={linePointsStr}
-        />
-
-        {/* Hover Highlight Marker */}
-        {hoveredPoint && (
-          <>
-            {/* Vertical crosshair line */}
-            <line 
-              x1={hoveredPoint.x} 
-              y1={padding} 
-              x2={hoveredPoint.x} 
-              y2={height - padding} 
-              stroke="#3b82f6" 
-              strokeWidth="1.5" 
-              strokeDasharray="3 3" 
-            />
-            {/* Highlight point dot */}
-            <circle 
-              cx={hoveredPoint.x} 
-              cy={hoveredPoint.y} 
-              r="6" 
-              fill="#3b82f6" 
-              stroke="#ffffff" 
-              strokeWidth="2" 
-            />
-          </>
+      <div className="chart-stage">
+        <div ref={holderRef} className="tv-chart" />
+        {busy && (
+          <div className="chart-overlay">
+            <div className="skeleton-line" />
+            <span className="chart-skeleton-label">Loading price series…</span>
+          </div>
         )}
-      </svg>
+        {noData && (
+          <div className="chart-overlay">
+            <span className="chart-skeleton-label">Not enough price history to plot.</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

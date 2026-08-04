@@ -1,8 +1,21 @@
-const API_BASE = import.meta.env.VITE_API_BASE || (
-  window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? 'http://localhost:8000'
-    : window.location.origin
-);
+/**
+ * Where the API lives.
+ *
+ * Default to the page's own origin. The previous rule was "if the hostname is
+ * localhost, the API is on port 8000", which broke every local setup where the
+ * backend served the built frontend on any other port — the page loaded fine
+ * and then every request went to a port with nothing on it.
+ *
+ * The only case that genuinely needs a different origin is the Vite dev server,
+ * which runs the UI on 5173 while uvicorn runs separately.
+ */
+const DEV_SERVER_PORTS = ['5173', '4173', '3000'];
+
+const API_BASE =
+  import.meta.env.VITE_API_BASE ||
+  (DEV_SERVER_PORTS.includes(window.location.port)
+    ? `${window.location.protocol}//${window.location.hostname}:8000`
+    : window.location.origin);
 
 export const api = {
   fetchTickers: async () => {
@@ -54,14 +67,32 @@ export const api = {
     return res.json();
   },
 
+  signalsUrl: () => `${API_BASE}/signals`,
+
+  fetchMarketScan: async () => {
+    const res = await fetch(`${API_BASE}/market/scan`, { cache: 'no-store' });
+    if (!res.ok) throw new Error('Failed to load market scan');
+    return res.json();
+  },
+
+  fetchMarketStatus: async () => {
+    const res = await fetch(`${API_BASE}/market/status`, { cache: 'no-store' });
+    if (!res.ok) throw new Error('Failed to load market status');
+    return res.json();
+  },
+
+  fetchIntradayScan: async () => {
+    const res = await fetch(`${API_BASE}/intraday/scan`, { cache: 'no-store' });
+    if (!res.ok) throw new Error('Failed to load intraday scan');
+    return res.json();
+  },
+
+  // Derived from API_BASE so the socket always follows the API, whatever
+  // origin that turned out to be.
   getWebSocketUrl: () => {
-    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    if (isLocal) {
-      return 'ws://127.0.0.1:8000/ws/signals';
-    } else {
-      // Secure WebSocket in production
-      const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      return `${wsProto}//${window.location.host}/ws/signals`;
-    }
+    const url = new URL(API_BASE, window.location.href);
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    url.pathname = '/ws/signals';
+    return url.toString();
   }
 };

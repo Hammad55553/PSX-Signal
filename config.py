@@ -5,7 +5,7 @@ DEFAULT_TICKERS = [
     "SYS.KA",     # Systems Limited
     "OGDC.KA",    # Oil & Gas Development Company
     "HUBC.KA",    # Hub Power Company
-    "ENGRO.KA",   # Engro Corporation
+    "ENGROH.KA",  # Engro Holdings (formerly ENGRO — old symbol is delisted)
     "LUCK.KA",    # Lucky Cement
     "MCB.KA",     # MCB Bank Limited
     "EFERT.KA",   # Engro Fertilizers

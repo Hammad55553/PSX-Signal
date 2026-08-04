@@ -1,110 +1,143 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 
-export const SpeedometerGauge = ({ signal, buyScore, sellScore }) => {
-  // Speedometer ranges from -100 (Strong Sell) to 100 (Strong Buy)
-  // Calculate value: buyScore is 0-3, sellScore is 0-3.
-  let value = 0; // Neutral
-  if (signal === 'BUY') {
-    value = buyScore ? (buyScore / 3) * 100 : 50;
-  } else if (signal === 'SELL') {
-    value = sellScore ? -(sellScore / 3) * 100 : -50;
-  }
+/**
+ * Conviction gauge.
+ *
+ * Geometry is derived rather than hand-written. The previous version had
+ * hard-coded arc endpoints of (73,40) and (127,40) for what were meant to be
+ * three equal 60-degree zones; the correct boundaries on an r=80 arc centred
+ * at (100,100) are (60, 30.7) and (140, 30.7), so every coloured band was
+ * misaligned with the needle it was supposed to describe.
+ *
+ * It also divided the score by 3 while the engine emits -10..+10, which pinned
+ * the needle to the end stop for almost every real signal.
+ */
 
-  // Map -100 to 100 range to -90 to 90 degrees
-  const angle = (value / 100) * 90;
+const CX = 100;
+const CY = 100;
+const R = 78;
+const ARC_W = 15;
 
-  // Gauge colors
-  const getGaugeColor = () => {
-    if (value > 20) return '#10b981'; // Green
-    if (value < -20) return '#ef4444'; // Red
-    return '#f59e0b'; // Amber/Yellow
-  };
+/** Polar -> cartesian. 180deg = left end of the dial, 0deg = right end. */
+function pt(angleDeg, radius = R) {
+  const a = (angleDeg * Math.PI) / 180;
+  return [CX + radius * Math.cos(a), CY - radius * Math.sin(a)];
+}
+
+function arc(fromDeg, toDeg, radius = R) {
+  const [x1, y1] = pt(fromDeg, radius);
+  const [x2, y2] = pt(toDeg, radius);
+  // Always the short way round; every band here is well under 180deg.
+  const large = Math.abs(toDeg - fromDeg) > 180 ? 1 : 0;
+  const sweep = fromDeg > toDeg ? 1 : 0;
+  return `M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${radius} ${radius} 0 ${large} ${sweep} ${x2.toFixed(2)} ${y2.toFixed(2)}`;
+}
+
+/** score (-10..10) -> dial angle (180deg at -10, 0deg at +10). */
+function scoreToAngle(score) {
+  const clamped = Math.max(-10, Math.min(10, score || 0));
+  return 180 - ((clamped + 10) / 20) * 180;
+}
+
+const BANDS = [
+  { from: 180, to: 144, color: '#ef4444', label: 'Strong exit' },
+  { from: 144, to: 108, color: '#f97316', label: 'Exit' },
+  { from: 108, to: 72, color: '#94a3b8', label: 'Neutral' },
+  { from: 72, to: 36, color: '#22c55e', label: 'Buy' },
+  { from: 36, to: 0, color: '#10b981', label: 'Strong buy' },
+];
+
+export const SpeedometerGauge = ({ signal, score = 0, confidence = 0, highConviction = false }) => {
+  // Animate from neutral on mount so the needle sweeps into place instead of
+  // snapping — the movement is what makes the reading legible.
+  const [shown, setShown] = useState(0);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setShown(score));
+    return () => cancelAnimationFrame(id);
+  }, [score]);
+
+  const angle = scoreToAngle(shown);
+  const [nx, ny] = pt(angle, R - 16);
+
+  const tone =
+    signal === 'BUY' ? '#10b981' : signal === 'SELL' ? '#ef4444' : '#94a3b8';
+  const verdict =
+    signal === 'BUY' ? 'BUY' : signal === 'SELL' ? 'EXIT' : 'NEUTRAL';
+  const subtitle =
+    signal === 'BUY'
+      ? 'Reversion setup is active'
+      : signal === 'SELL'
+      ? 'Close longs — not a short signal'
+      : 'No edge worth trading';
 
   return (
-    <div style={{
-      background: '#ffffff',
-      border: '1px solid var(--border-color)',
-      borderRadius: '16px',
-      padding: '1.5rem',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: '2rem',
-      boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)'
-    }}>
-      <h4 style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '1rem' }}>
-        🚀 Market Sentiment Meter
-      </h4>
-      
-      {/* Gauge SVG */}
-      <div style={{ position: 'relative', width: '200px', height: '110px', overflow: 'hidden' }}>
-        <svg width="200" height="200" viewBox="0 0 200 200">
-          {/* Background Arc */}
-          <path
-            d="M 20 100 A 80 80 0 0 1 180 100"
-            fill="none"
-            stroke="#e2e8f0"
-            strokeWidth="16"
-            strokeLinecap="round"
-          />
-          {/* Sell Zone (Red) */}
-          <path
-            d="M 20 100 A 80 80 0 0 1 73 40"
-            fill="none"
-            stroke="#ef4444"
-            strokeWidth="16"
-            strokeOpacity="0.4"
-          />
-          {/* Neutral Zone (Orange) */}
-          <path
-            d="M 73 40 A 80 80 0 0 1 127 40"
-            fill="none"
-            stroke="#f59e0b"
-            strokeWidth="16"
-            strokeOpacity="0.4"
-          />
-          {/* Buy Zone (Green) */}
-          <path
-            d="M 127 40 A 80 80 0 0 1 180 100"
-            fill="none"
-            stroke="#10b981"
-            strokeWidth="16"
-            strokeOpacity="0.4"
-          />
+    <div className="gauge-card">
+      <div className="gauge-head">
+        <span>Conviction</span>
+        {highConviction && <span className="conviction-tag">HIGH</span>}
+      </div>
 
-          {/* Needle Pin */}
-          <circle cx="100" cy="100" r="8" fill="#1e293b" />
+      <div className="gauge-svg-wrap">
+        <svg viewBox="0 0 200 128" className="gauge-svg" role="img"
+             aria-label={`${verdict}, score ${score.toFixed(1)} of 10, confidence ${Math.round(confidence)} percent`}>
+          {/* No blur filters anywhere. An feGaussianBlur glow on the needle
+              and the active band made the whole dial read as out of focus —
+              contrast and weight carry the emphasis instead. */}
 
-          {/* Needle */}
-          <line
-            x1="100"
-            y1="100"
-            x2="100"
-            y2="35"
-            stroke="#1e293b"
-            strokeWidth="4"
-            strokeLinecap="round"
-            transform={`rotate(${angle} 100 100)`}
-            style={{ transition: 'transform 0.8s cubic-bezier(0.4, 0, 0.2, 1)' }}
-          />
+          {/* Track */}
+          <path d={arc(180, 0)} fill="none" stroke="var(--gauge-track)"
+                strokeWidth={ARC_W} strokeLinecap="round" />
+
+          {/* Coloured bands */}
+          {BANDS.map((b) => (
+            <path key={b.label} d={arc(b.from, b.to)} fill="none" stroke={b.color}
+                  strokeWidth={ARC_W} strokeOpacity="0.28" />
+          ))}
+
+          {/* Active band, at full strength */}
+          {BANDS.filter((b) => angle <= b.from && angle >= b.to).map((b) => (
+            <path key={`${b.label}-active`} d={arc(b.from, b.to)} fill="none"
+                  stroke={b.color} strokeWidth={ARC_W + 2} strokeLinecap="round"
+                  className="gauge-band-active" />
+          ))}
+
+          {/* Ticks every 18deg */}
+          {Array.from({ length: 11 }, (_, i) => {
+            const a = 180 - i * 18;
+            const [x1, y1] = pt(a, R - ARC_W / 2 - 3);
+            const [x2, y2] = pt(a, R - ARC_W / 2 - (i % 5 === 0 ? 11 : 7));
+            return (
+              <line key={a} x1={x1} y1={y1} x2={x2} y2={y2}
+                    stroke="var(--gauge-tick)" strokeWidth={i % 5 === 0 ? 2 : 1}
+                    strokeLinecap="round" />
+            );
+          })}
+
+          <text x="14" y="120" className="gauge-axis-label">-10</text>
+          <text x="100" y="16" className="gauge-axis-label" textAnchor="middle">0</text>
+          <text x="186" y="120" className="gauge-axis-label" textAnchor="end">+10</text>
+
+          {/* Needle — tapered via two strokes rather than a filter, so it
+              stays sharp at any rendered size. */}
+          <g className="gauge-needle">
+            <line x1={CX} y1={CY} x2={nx} y2={ny} stroke={tone} strokeWidth="4"
+                  strokeLinecap="round" opacity="0.28" />
+            <line x1={CX} y1={CY} x2={nx} y2={ny} stroke={tone} strokeWidth="2.2"
+                  strokeLinecap="round" />
+            <circle cx={CX} cy={CY} r="9" fill="var(--surface)" stroke="var(--gauge-hub)" strokeWidth="2" />
+            <circle cx={CX} cy={CY} r="3.5" fill={tone} />
+          </g>
         </svg>
       </div>
 
-      {/* Meter text details */}
-      <div style={{ textAlign: 'center', marginTop: '-10px' }}>
-        <div style={{
-          fontSize: '1.4rem',
-          fontWeight: 800,
-          color: getGaugeColor(),
-          textTransform: 'uppercase',
-          letterSpacing: '0.02em'
-        }}>
-          {signal === 'HOLD' ? 'Neutral' : signal}
+      <div className="gauge-readout">
+        <div className="gauge-verdict" style={{ color: tone }}>{verdict}</div>
+        <div className="gauge-score">
+          score <strong>{(score ?? 0).toFixed(1)}</strong>
+          <span className="gauge-sep">·</span>
+          confidence <strong>{Math.round(confidence)}%</strong>
         </div>
-        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
-          {value > 20 ? 'Strong Bullish pressure detected' : value < -20 ? 'Bearish momentum dominant' : 'Sideways market movement'}
-        </div>
+        <div className="gauge-subtitle">{subtitle}</div>
       </div>
     </div>
   );

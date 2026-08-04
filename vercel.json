@@ -44,6 +44,22 @@
       "dest": "main.py"
     },
     {
+      "src": "/market/(.*)",
+      "dest": "main.py"
+    },
+    {
+      "src": "/intraday/(.*)",
+      "dest": "main.py"
+    },
+    {
+      "src": "/analyst/(.*)",
+      "dest": "main.py"
+    },
+    {
+      "src": "/status",
+      "dest": "main.py"
+    },
+    {
       "src": "/telegram-config/(.*)",
       "dest": "main.py"
     },

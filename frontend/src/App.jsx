@@ -1,10 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 import { api } from './services/api';
+import { notify } from './services/notify';
+import { watchlist } from './services/watchlist';
 import { CandlestickChart } from './components/CandlestickChart';
 import { CompanyDetails } from './components/CompanyDetails';
 import { SpeedometerGauge } from './components/SpeedometerGauge';
 import { SparklineChart } from './components/SparklineChart';
+
+/** "12s ago" / "3m ago" — recomputed each tick so the header never looks frozen. */
+function secondsAgo(then, now) {
+  const s = Math.max(0, Math.round((now - then) / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m}m ago` : `${Math.floor(m / 60)}h ago`;
+}
 
 function App() {
   const [currentScreen, setCurrentScreen] = useState('dashboard'); // 'dashboard' or 'details'
@@ -21,6 +31,43 @@ function App() {
   // Live Alerts feed state
   const [alerts, setAlerts] = useState([]);
   const [toasts, setToasts] = useState([]);
+  const [notifyPermission, setNotifyPermission] = useState(notify.permission());
+  const [now, setNow] = useState(new Date());
+  const [wsLive, setWsLive] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshSeconds, setRefreshSeconds] = useState(45);
+  const [starred, setStarred] = useState([]);
+
+  // Scope: 'watchlist' (the user's own list) or 'market' (whole-exchange sweep)
+  const [scope, setScope] = useState('watchlist');
+  const [marketSignals, setMarketSignals] = useState({});
+  const [marketTickers, setMarketTickers] = useState([]);
+  const [marketStatus, setMarketStatus] = useState(null);
+
+  // Watchlist filters
+  const [signalFilter, setSignalFilter] = useState('ALL'); // ALL | BUY | SELL | HOLD
+  const [priceMin, setPriceMin] = useState('');
+  const [priceMax, setPriceMax] = useState('');
+  const [convictionOnly, setConvictionOnly] = useState(false);
+  const [sortBy, setSortBy] = useState('score'); // score | confidence | price | change | name
+
+  const [lastScan, setLastScan] = useState(null);
+  // Previous scan, kept in a ref so notification logic never runs inside a
+  // setState updater (React can invoke those twice).
+  const prevSignalsRef = useRef({});
+  // applyScan lives inside the connection effect; the manual refresh button
+  // reaches it through this ref rather than duplicating the logic.
+  const applyScanRef = useRef(null);
+  // Tracks which ticker's detail fetch is the most recent one requested. A
+  // plain state/closure check can't do this — the closure captures whatever
+  // selectedTicker was at click time, which is always stale by the time an
+  // in-flight fetch resolves, since React re-renders (and hands out a new
+  // closure) as soon as setSelectedTicker runs.
+  const detailsRequestRef = useRef(null);
+  // Reached by refreshNow so the header's refresh button reloads whatever the
+  // active screen actually shows, instead of always reloading the watchlist.
+  const marketLoadRef = useRef(null);
+  const intradayLoadRef = useRef(null);
 
   // Chart timeseries states
   const [chartData, setChartData] = useState([]);
@@ -45,11 +92,14 @@ function App() {
     async function loadTickers() {
       try {
         setLoadingList(true);
-        const tickersList = await api.fetchTickers();
-        setTickers([...new Set(tickersList)]);
+        const defaults = await api.fetchTickers();
+        // The server's list is a starting point; the user's own edits win.
+        const merged = watchlist.merge(defaults);
+        setTickers(merged);
+        setStarred(watchlist.starred());
 
-        if (tickersList.length > 0) {
-          setSelectedTicker(tickersList[0]);
+        if (merged.length > 0) {
+          setSelectedTicker(merged[0]);
         }
       } catch (err) {
         console.error("Error loading tickers:", err);
@@ -59,6 +109,51 @@ function App() {
       }
     }
     loadTickers();
+
+    // A single path for both transports. The WebSocket and the HTTP fallback
+    // deliver the identical payload, so they must not drift apart.
+    //
+    // Comparison happens against a ref rather than inside a setState updater:
+    // React may invoke an updater twice (StrictMode, concurrent rendering), and
+    // firing notifications from inside one double-alerts the user.
+    function applyScan(data) {
+      if (!data || !Array.isArray(data.results)) return;
+
+      const previous = prevSignalsRef.current;
+      const transitions = notify.findTransitions(data.results, previous);
+
+      const signalMap = {};
+      data.results.forEach((sig) => { signalMap[sig.ticker] = sig; });
+      prevSignalsRef.current = { ...previous, ...signalMap };
+
+      setAllSignals((prev) => ({ ...prev, ...signalMap }));
+      setLastScan({
+        at: new Date(),
+        analyzed: data.total_analyzed ?? data.results.length,
+        actionable: data.actionable ?? 0,
+        highConviction: data.high_conviction ?? 0,
+      });
+
+      if (transitions.length === 0) return;
+
+      const newAlerts = transitions.map((sig) => ({
+        time: new Date().toLocaleTimeString(),
+        ticker: sig.symbol || sig.ticker.replace('.KA', ''),
+        signal: sig.signal,
+        price: sig.current_price,
+        confidence: sig.confidence,
+        highConviction: sig.high_conviction,
+        target: sig.target,
+        stop_loss: sig.stop_loss,
+        holdSessions: sig.hold_sessions,
+        tradeable: sig.tradeable,
+      }));
+
+      setAlerts((prev) => [...newAlerts, ...prev].slice(0, 100));
+      newAlerts.forEach(triggerToast);
+      transitions.forEach((sig) => notify.send(sig));
+    }
+    applyScanRef.current = applyScan;
 
     // Setup WebSocket connection to receive real-time streams with auto-reconnection
     let ws;
@@ -71,41 +166,12 @@ function App() {
       ws.onopen = () => {
         console.log("WebSocket connected successfully");
         setError(null);
+        setWsLive(true);
       };
 
       ws.onmessage = (event) => {
         try {
-          const data = JSON.parse(event.data);
-          const signalMap = {};
-          const newAlerts = [];
-
-          data.results.forEach((sig) => {
-            signalMap[sig.ticker] = sig;
-          });
-
-          setAllSignals((prevSignals) => {
-            data.results.forEach((sig) => {
-              const prevSig = prevSignals[sig.ticker];
-              if (prevSig && prevSig.signal !== sig.signal && (sig.signal === "BUY" || sig.signal === "SELL")) {
-                const newAlert = {
-                  time: new Date().toLocaleTimeString(),
-                  ticker: sig.ticker.replace('.KA', ''),
-                  signal: sig.signal,
-                  price: sig.current_price,
-                  target_buy: sig.target_buy_price,
-                  target_sell: sig.target_sell_price,
-                  stop_loss: sig.stop_loss
-                };
-                newAlerts.push(newAlert);
-                triggerToast(newAlert);
-              }
-            });
-            return { ...prevSignals, ...signalMap };
-          });
-
-          if (newAlerts.length > 0) {
-            setAlerts((prevAlerts) => [...newAlerts, ...prevAlerts]);
-          }
+          applyScan(JSON.parse(event.data));
         } catch (err) {
           console.error("Error parsing WebSocket packet:", err);
         }
@@ -113,6 +179,7 @@ function App() {
 
       ws.onclose = () => {
         console.log("WebSocket disconnected. Retrying in 3 seconds...");
+        setWsLive(false);
         reconnectTimeout = setTimeout(() => {
           connectWebSocket();
         }, 3000);
@@ -126,43 +193,10 @@ function App() {
 
     async function fetchSignalsHttp() {
       try {
-        const data = await api.fetchTickers(); // Fallback endpoints trigger
-        // Re-route to signals list fetcher
-        const res = await fetch(api.getWebSocketUrl().replace('ws://', 'http://').replace('wss://', 'https://').replace('/ws/signals', '/signals'));
+        const res = await fetch(api.signalsUrl());
         if (!res.ok) return;
-        const sigs = await res.json();
-        if (sigs.results) {
-          const signalMap = {};
-          const newAlerts = [];
-
-          sigs.results.forEach((sig) => {
-            signalMap[sig.ticker] = sig;
-          });
-
-          setAllSignals((prevSignals) => {
-            sigs.results.forEach((sig) => {
-              const prevSig = prevSignals[sig.ticker];
-              if (prevSig && prevSig.signal !== sig.signal && (sig.signal === "BUY" || sig.signal === "SELL")) {
-                const newAlert = {
-                  time: new Date().toLocaleTimeString(),
-                  ticker: sig.ticker.replace('.KA', ''),
-                  signal: sig.signal,
-                  price: sig.current_price,
-                  target_buy: sig.target_buy_price,
-                  target_sell: sig.target_sell_price,
-                  stop_loss: sig.stop_loss
-                };
-                newAlerts.push(newAlert);
-                triggerToast(newAlert);
-              }
-            });
-            return { ...prevSignals, ...signalMap };
-          });
-
-          if (newAlerts.length > 0) {
-            setAlerts((prevAlerts) => [...newAlerts, ...prevAlerts]);
-          }
-        }
+        const data = await res.json();
+        if (data.results) applyScan(data);
       } catch (err) {
         console.error("Error polling signals via HTTP:", err);
       }
@@ -184,13 +218,18 @@ function App() {
     };
   }, []);
 
-  // 2. Automatically sync detail view with the live WebSocket signals map
+  // 2. Automatically sync detail view with the live signals map. Must follow
+  // whichever scope the card was clicked from — a market-scope card's ticker
+  // generally isn't in the watchlist's `allSignals`, so checking only that
+  // map left the detail view showing whatever ticker was last loaded instead
+  // of the one just clicked.
   useEffect(() => {
-    if (!selectedTicker || !allSignals[selectedTicker]) return;
-    const liveData = allSignals[selectedTicker];
+    const source = scope === 'market' ? marketSignals : allSignals;
+    if (!selectedTicker || !source[selectedTicker]) return;
+    const liveData = source[selectedTicker];
     setSelectedAnalysis(liveData);
     setSelectedSignal(liveData);
-  }, [selectedTicker, allSignals]);
+  }, [selectedTicker, scope, marketSignals, allSignals]);
 
   // 2a. Load all symbols on startup for autocomplete lookup
   useEffect(() => {
@@ -287,9 +326,8 @@ function App() {
         throw new Error(data.error);
       }
 
-      if (!tickers.includes(tickerToSearch)) {
-        setTickers(prev => [...new Set([...prev, tickerToSearch])]);
-      }
+      // Persist it, so a symbol the user looked up is still there tomorrow.
+      addTicker(tickerToSearch);
 
       setAllSignals(prev => ({
         ...prev,
@@ -340,9 +378,8 @@ function App() {
         throw new Error(data.error);
       }
 
-      if (!tickers.includes(tickerToSearch)) {
-        setTickers(prev => [...new Set([...prev, tickerToSearch])]);
-      }
+      // Persist it, so a symbol the user looked up is still there tomorrow.
+      addTicker(tickerToSearch);
 
       setAllSignals(prev => ({
         ...prev,
@@ -356,7 +393,9 @@ function App() {
       setCurrentScreen('details'); // Navigate to detail view on search/suggest click
     } catch (err) {
       console.error(err);
-      setSearchError(err.message || "Ticker not found or invalid in PSX. Please try again.");
+      const message = err.message || "Ticker not found or invalid in PSX. Please try again.";
+      setSearchError(message);
+      triggerToast({ kind: 'error', ticker: item.symbol.toUpperCase(), message });
     } finally {
       setLoadingDetails(false);
     }
@@ -365,6 +404,235 @@ function App() {
   const selectRecommendationSymbol = (symbol) => {
     selectSuggestion({ symbol, name: symbol });
   };
+
+  // One-second heartbeat. Drives the clock and the "updated Ns ago" counter so
+  // the page visibly stays alive between scans.
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Load the market sweep whenever that scope is active, and keep polling
+  // while the first (slow) sweep is still building.
+  useEffect(() => {
+    if (scope !== 'market') return undefined;
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const data = await api.fetchMarketScan();
+        if (cancelled) return;
+        const map = {};
+        (data.results || []).forEach((s) => { map[s.ticker] = s; });
+        setMarketSignals(map);
+        setMarketTickers((data.results || []).map((s) => s.ticker));
+        setMarketStatus({
+          scanning: data.scanning ?? false,
+          progress: data.progress ?? 0,
+          universe: data.universe ?? 0,
+          count: data.total_analyzed ?? 0,
+          message: data.message,
+        });
+      } catch (err) {
+        console.error('Market scan failed:', err);
+      }
+    }
+    marketLoadRef.current = load;
+
+    load();
+    const id = setInterval(load, 20000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [scope]);
+
+  // Intraday gap-fade opportunities — a separate strategy from the daily
+  // model (see research_intraday.py): a big overnight gap down has
+  // historically closed back up by end of session. Poll independently of
+  // scope since this is a day-trade view, not tied to watchlist/market.
+  const [intradayOps, setIntradayOps] = useState([]);
+  const [intradayScannedAt, setIntradayScannedAt] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const data = await api.fetchIntradayScan();
+        if (cancelled) return;
+        setIntradayOps(data.opportunities || []);
+        setIntradayScannedAt(data.scanned_at || null);
+      } catch (err) {
+        console.error('Intraday scan failed:', err);
+      }
+    }
+    intradayLoadRef.current = load;
+    load();
+    const id = setInterval(load, 30000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  // Open a card's detail view. Two bugs lived here before this: (1) leaving
+  // the previous ticker's data on screen while the new one loads, so the
+  // header said one symbol and the body showed another's; (2) tickers that
+  // never made it into a background scan (thin data, scan error) had no way
+  // to load at all — clicking them just kept showing whatever was there.
+  const openTickerDetails = async (ticker) => {
+    detailsRequestRef.current = ticker;
+    setSelectedTicker(ticker);
+    setCurrentScreen('details');
+    setSelectedAnalysis(null);
+    setSelectedSignal(null);
+
+    const cached = (scope === 'market' ? marketSignals : allSignals)[ticker];
+    if (cached) {
+      setSelectedAnalysis(cached);
+      setSelectedSignal(cached);
+      return;
+    }
+
+    try {
+      setLoadingDetails(true);
+      const data = await api.fetchSignal(ticker);
+      if (data.error) throw new Error(data.error);
+      if (detailsRequestRef.current !== ticker) return; // superseded by a newer click
+      setSelectedAnalysis(data);
+      setSelectedSignal(data);
+      setAllSignals((prev) => ({ ...prev, [ticker]: data }));
+    } catch (err) {
+      if (detailsRequestRef.current !== ticker) return;
+      console.error(err);
+      const message = err.message || `Could not load data for ${ticker.replace('.KA', '')}.`;
+      setSearchError(message);
+      triggerToast({ kind: 'error', ticker: ticker.replace('.KA', ''), message });
+      setCurrentScreen('dashboard');
+    } finally {
+      if (detailsRequestRef.current === ticker) setLoadingDetails(false);
+    }
+  };
+
+  // Whichever set the filters and cards operate on.
+  const activeTickers = scope === 'market' ? marketTickers : tickers;
+  const activeSignals = scope === 'market' ? marketSignals : allSignals;
+
+  const addTicker = (ticker) => {
+    const t = watchlist.norm(ticker);
+    if (!t) return;
+    watchlist.add(t);
+    setTickers((prev) => (prev.includes(t) ? prev : [...prev, t]));
+  };
+
+  const removeTicker = (ticker, e) => {
+    // The card itself navigates; the delete control must not trigger that.
+    e?.stopPropagation();
+    const t = watchlist.norm(ticker);
+    watchlist.remove(t);
+    setTickers((prev) => prev.filter((x) => x !== t));
+    setStarred(watchlist.starred());
+    setAllSignals((prev) => {
+      const next = { ...prev };
+      delete next[t];
+      return next;
+    });
+    delete prevSignalsRef.current[t];
+    if (selectedTicker === t) {
+      setSelectedTicker('');
+      setCurrentScreen('dashboard');
+    }
+  };
+
+  const toggleStar = (ticker, e) => {
+    e?.stopPropagation();
+    watchlist.toggleStar(ticker);
+    setStarred(watchlist.starred());
+  };
+
+  const resetWatchlist = async () => {
+    watchlist.reset();
+    const defaults = await api.fetchTickers();
+    setTickers(defaults.map(watchlist.norm));
+    setStarred([]);
+  };
+
+  // Reloads whatever the current screen is actually showing — the intraday
+  // screen refetches the gap-fade scan, a details screen refetches that one
+  // ticker, and the dashboard refetches the watchlist or market scan
+  // depending on scope. Previously this always hit the watchlist /signals
+  // endpoint no matter where you were, so refreshing on, say, the intraday
+  // tab visibly did nothing for what was on screen.
+  const refreshNow = async () => {
+    setRefreshing(true);
+    try {
+      if (currentScreen === 'intraday') {
+        await intradayLoadRef.current?.();
+      } else if (currentScreen === 'details' && selectedTicker) {
+        await openTickerDetails(selectedTicker);
+      } else if (scope === 'market') {
+        await marketLoadRef.current?.();
+      } else {
+        const res = await fetch(api.signalsUrl(), { cache: 'no-store' });
+        if (res.ok) applyScanRef.current?.(await res.json());
+      }
+    } catch (err) {
+      console.error('Manual refresh failed:', err);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // Strongest candidate first. A watchlist sorted alphabetically buries the one
+  // row that matters; sorting by score puts it at the top of the screen.
+  const rankedTickers = React.useMemo(() => {
+    const priceOf = (t) => activeSignals[t]?.current_price ?? null;
+
+    const passes = (t) => {
+      const s = activeSignals[t];
+      if (!s) return true;                       // still loading — keep visible
+
+      if (signalFilter !== 'ALL' && s.signal !== signalFilter) return false;
+      if (convictionOnly && !s.high_conviction) return false;
+
+      const min = parseFloat(priceMin);
+      const max = parseFloat(priceMax);
+      const p = priceOf(t);
+      if (!Number.isNaN(min) && p !== null && p < min) return false;
+      if (!Number.isNaN(max) && p !== null && p > max) return false;
+
+      return true;
+    };
+
+    const key = {
+      score: (t) => activeSignals[t]?.score ?? -Infinity,
+      confidence: (t) => activeSignals[t]?.confidence ?? -Infinity,
+      price: (t) => priceOf(t) ?? -Infinity,
+      change: (t) => activeSignals[t]?.change_percent ?? -Infinity,
+      name: (t) => t,
+    }[sortBy];
+
+    const filtered = activeTickers.filter(passes);
+    return filtered.sort((a, b) => {
+      // Starred names pin to the top under every sort — that is what starring
+      // is for.
+      const sa = starred.includes(a) ? 1 : 0;
+      const sb = starred.includes(b) ? 1 : 0;
+      if (sa !== sb) return sb - sa;
+
+      // Conviction floats up next in a score sort — it is the whole point of
+      // the ranking.
+      if (sortBy === 'score') {
+        const ca = activeSignals[a]?.high_conviction ? 1 : 0;
+        const cb = activeSignals[b]?.high_conviction ? 1 : 0;
+        if (ca !== cb) return cb - ca;
+      }
+      if (sortBy === 'name') return String(key(a)).localeCompare(String(key(b)));
+      return key(b) - key(a);
+    });
+  }, [activeTickers, activeSignals, signalFilter, priceMin, priceMax, convictionOnly, sortBy, starred]);
+
+  const filterCounts = React.useMemo(() => {
+    const c = { ALL: activeTickers.length, BUY: 0, SELL: 0, HOLD: 0 };
+    activeTickers.forEach((t) => {
+      const s = activeSignals[t];
+      if (s && c[s.signal] !== undefined) c[s.signal] += 1;
+    });
+    return c;
+  }, [activeTickers, activeSignals]);
 
   const triggerToast = (alertObj) => {
     const id = Date.now() + Math.random().toString();
@@ -441,21 +709,42 @@ function App() {
       {/* Toast Notifications Container */}
       <div className="toast-container">
         {toasts.map((toast) => (
-          <div key={toast.id} className={`notification-toast ${toast.signal.toLowerCase()}`}>
-            <div className="toast-title">
-              <span>🚨 Live trading alert!</span>
-              <button className="toast-close" onClick={() => setToasts((prev) => prev.filter((t) => t.id !== toast.id))}>×</button>
+          toast.kind === 'error' ? (
+            <div key={toast.id} className="notification-toast error">
+              <div className="toast-title">
+                <span>⚠️ {toast.ticker}</span>
+                <button className="toast-close" onClick={() => setToasts((prev) => prev.filter((t) => t.id !== toast.id))}>×</button>
+              </div>
+              <p>{toast.message}</p>
             </div>
-            <p>
-              <strong>{toast.ticker}</strong>: {toast.signal} signal triggered at{' '}
-              <strong>Rs. {toast.price.toFixed(2)}</strong>.
-            </p>
-            <div className="toast-targets">
-              <span>Buy: Rs. {toast.target_buy.toFixed(2)}</span>
-              <span>Sell: Rs. {toast.target_sell.toFixed(2)}</span>
-              <span>SL: Rs. {toast.stop_loss.toFixed(2)}</span>
+          ) : (
+            <div key={toast.id} className={`notification-toast ${toast.signal.toLowerCase()}${toast.highConviction ? ' high-conviction' : ''}`}>
+              <div className="toast-title">
+                <span>
+                  {toast.signal === 'BUY' ? '🟢 BUY' : '🔴 EXIT'} {toast.ticker}
+                  {toast.highConviction && <span className="conviction-tag">HIGH CONVICTION</span>}
+                </span>
+                <button className="toast-close" onClick={() => setToasts((prev) => prev.filter((t) => t.id !== toast.id))}>×</button>
+              </div>
+              <p>
+                At <strong>Rs. {toast.price.toFixed(2)}</strong> · confidence{' '}
+                <strong>{Math.round(toast.confidence)}%</strong>
+              </p>
+              {toast.signal === 'BUY' ? (
+                <div className="toast-targets">
+                  <span>Target Rs. {toast.target.toFixed(2)}</span>
+                  <span>Stop Rs. {toast.stop_loss.toFixed(2)}</span>
+                  <span>Hold {toast.holdSessions} sessions</span>
+                </div>
+              ) : (
+                /* The short side lost 1.5% per trade in testing, so this must
+                   never read as an invitation to short. */
+                <div className="toast-targets">
+                  <span>Close longs — exit signal only, not a short.</span>
+                </div>
+              )}
             </div>
-          </div>
+          )
         ))}
       </div>
 
@@ -472,6 +761,12 @@ function App() {
           >
             🏠 Market Overview
           </button>
+          <button
+            onClick={() => setCurrentScreen('intraday')}
+            className={`header-nav-btn ${currentScreen === 'intraday' ? 'active' : ''}`}
+          >
+            ⚡ Intraday{intradayOps.length > 0 ? ` (${intradayOps.length})` : ''}
+          </button>
           {selectedTicker && (
             <button
               onClick={() => setCurrentScreen('details')}
@@ -480,7 +775,39 @@ function App() {
               📊 {selectedTicker.replace('.KA', '')} Analytics
             </button>
           )}
-          <div className="market-badge">🟢 Live</div>
+          {notifyPermission !== 'granted' && notifyPermission !== 'unsupported' && (
+            <button
+              className="header-nav-btn notify-cta"
+              onClick={async () => setNotifyPermission(await notify.request())}
+              title="Get a desktop alert the moment a signal fires"
+            >
+              🔔 Enable alerts
+            </button>
+          )}
+
+          {/* Live status. The age counter ticks every second off `now`, so the
+              header proves the connection is alive between scans instead of
+              looking frozen for 45 seconds at a time. */}
+          <div
+            className={`market-badge ${wsLive ? 'live' : 'offline'}`}
+            title={lastScan ? `${lastScan.analyzed} tickers · updates every ${refreshSeconds}s` : 'Connecting…'}
+          >
+            <span className={`live-dot ${wsLive ? '' : 'off'}`} />
+            {lastScan
+              ? `${lastScan.actionable} actionable · ${secondsAgo(lastScan.at, now)}`
+              : 'Connecting…'}
+          </div>
+
+          <span className="clock">{now.toLocaleTimeString()}</span>
+
+          <button
+            className={`header-nav-btn refresh-btn ${refreshing ? 'spinning' : ''}`}
+            onClick={refreshNow}
+            disabled={refreshing}
+            title="Fetch the latest scan now"
+          >
+            ⟳
+          </button>
         </div>
       </header>
 
@@ -535,41 +862,223 @@ function App() {
                   )}
                 </form>
 
+                {/* Scope: the user's own list, or a sweep of the whole market */}
+                <div className="scope-bar">
+                  <div className="filter-group segmented scope-seg">
+                    <button
+                      className={`seg-btn all ${scope === 'watchlist' ? 'active' : ''}`}
+                      onClick={() => setScope('watchlist')}
+                    >
+                      My watchlist<span className="seg-count">{tickers.length}</span>
+                    </button>
+                    <button
+                      className={`seg-btn all ${scope === 'market' ? 'active' : ''}`}
+                      onClick={() => setScope('market')}
+                    >
+                      Whole market
+                      <span className="seg-count">{marketTickers.length || '…'}</span>
+                    </button>
+                  </div>
+
+                  {scope === 'market' && marketStatus?.scanning && (
+                    <span className="scope-note">
+                      <span className="spinner tiny" />
+                      Sweeping the exchange… {marketStatus.progress}/{marketStatus.universe}
+                    </span>
+                  )}
+                  {scope === 'market' && !marketStatus?.scanning && marketStatus?.count > 0 && (
+                    <span className="scope-note">
+                      {marketStatus.count} symbols scanned · refreshes every 15 min
+                    </span>
+                  )}
+                  {scope === 'watchlist' && (
+                    <button className="filter-reset" onClick={resetWatchlist}>
+                      Reset to defaults
+                    </button>
+                  )}
+                </div>
+
+                {/* Filters */}
+                <div className="filter-bar">
+                  <div className="filter-group segmented">
+                    {['ALL', 'BUY', 'SELL', 'HOLD'].map((s) => (
+                      <button
+                        key={s}
+                        className={`seg-btn ${s.toLowerCase()} ${signalFilter === s ? 'active' : ''}`}
+                        onClick={() => setSignalFilter(s)}
+                      >
+                        {s === 'SELL' ? 'EXIT' : s}
+                        <span className="seg-count">{filterCounts[s]}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <label className="filter-check">
+                    <input
+                      type="checkbox"
+                      checked={convictionOnly}
+                      onChange={(e) => setConvictionOnly(e.target.checked)}
+                    />
+                    High conviction only
+                  </label>
+
+                  <div className="filter-group price-range">
+                    <span className="filter-label">Price</span>
+                    <input
+                      type="number" inputMode="decimal" placeholder="min"
+                      className="filter-input" value={priceMin}
+                      onChange={(e) => setPriceMin(e.target.value)}
+                    />
+                    <span className="filter-dash">–</span>
+                    <input
+                      type="number" inputMode="decimal" placeholder="max"
+                      className="filter-input" value={priceMax}
+                      onChange={(e) => setPriceMax(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="filter-group">
+                    <span className="filter-label">Sort</span>
+                    <select
+                      className="filter-select"
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value)}
+                    >
+                      <option value="score">Signal score</option>
+                      <option value="confidence">Confidence</option>
+                      <option value="change">Day change</option>
+                      <option value="price">Price</option>
+                      <option value="name">Symbol A–Z</option>
+                    </select>
+                  </div>
+
+                  {(signalFilter !== 'ALL' || priceMin || priceMax || convictionOnly || sortBy !== 'score') && (
+                    <button
+                      className="filter-reset"
+                      onClick={() => {
+                        setSignalFilter('ALL'); setPriceMin(''); setPriceMax('');
+                        setConvictionOnly(false); setSortBy('score');
+                      }}
+                    >
+                      Reset
+                    </button>
+                  )}
+
+                  <span className="filter-result">
+                    {rankedTickers.length} of {activeTickers.length}
+                  </span>
+                </div>
+
                 {loadingList ? (
                   <div className="loader">
                     <div className="spinner"></div>
                   </div>
+                ) : rankedTickers.length === 0 ? (
+                  <div className="filter-empty">
+                    No securities match these filters.
+                    <button className="filter-reset" onClick={() => {
+                      setSignalFilter('ALL'); setPriceMin(''); setPriceMax('');
+                      setConvictionOnly(false);
+                    }}>Clear filters</button>
+                  </div>
                 ) : (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.25rem' }}>
-                    {tickers.map((ticker) => {
-                      const summary = allSignals[ticker];
+                    {rankedTickers.map((ticker) => {
+                      const summary = activeSignals[ticker];
                       const cleanName = ticker.replace('.KA', '');
+                      const stale = summary && summary.stale_days > 3;
                       return (
                         <div
                           key={ticker}
-                          className={`ticker-item premium-hover-card ${selectedTicker === ticker ? 'active' : ''}`}
-                          onClick={() => {
-                            setSelectedTicker(ticker);
-                            setCurrentScreen('details'); // Navigate to details on click
-                          }}
-                          style={{ padding: '1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                          className={`ticker-item premium-hover-card ${selectedTicker === ticker ? 'active' : ''}${summary?.high_conviction ? ' high-conviction' : ''}`}
+                          onClick={() => openTickerDetails(ticker)}
                         >
-                          <div>
-                            <span className="ticker-name" style={{ fontSize: '1.2rem' }}>{cleanName}</span>
-                            <div className="ticker-fullname">{summary ? summary.name : 'Karachi Stock Exchange'}</div>
-                          </div>
-                          <div className="ticker-price" style={{ textAlign: 'right' }}>
-                            {summary ? (
-                              <>
-                                <div className="price-value" style={{ fontSize: '1.1rem', fontWeight: 700 }}>Rs. {summary.current_price.toFixed(2)}</div>
-                                <span className={`signal-pill ${summary.signal.toLowerCase()}`} style={{ display: 'inline-block', marginTop: '0.25rem' }}>
-                                  {summary.signal}
-                                </span>
-                              </>
+                          {/* In market scope these are watchlist operations on
+                              something not yet in the list, so the only useful
+                              control is "add". */}
+                          <div className="card-actions">
+                            {scope === 'market' ? (
+                              <button
+                                className={`icon-btn add ${tickers.includes(ticker) ? 'on' : ''}`}
+                                onClick={(e) => { e.stopPropagation(); addTicker(ticker); }}
+                                title={tickers.includes(ticker) ? 'Already in your watchlist' : `Add ${cleanName} to watchlist`}
+                                disabled={tickers.includes(ticker)}
+                              >
+                                {tickers.includes(ticker) ? '✓' : '+'}
+                              </button>
                             ) : (
-                              <div className="price-value">Loading...</div>
+                              <>
+                                <button
+                                  className={`icon-btn star ${starred.includes(ticker) ? 'on' : ''}`}
+                                  onClick={(e) => toggleStar(ticker, e)}
+                                  title={starred.includes(ticker) ? 'Unpin from top' : 'Pin to top'}
+                                  aria-label={starred.includes(ticker) ? 'Unpin' : 'Pin'}
+                                >
+                                  {starred.includes(ticker) ? '★' : '☆'}
+                                </button>
+                                <button
+                                  className="icon-btn remove"
+                                  onClick={(e) => removeTicker(ticker, e)}
+                                  title={`Remove ${cleanName} from watchlist`}
+                                  aria-label={`Remove ${cleanName}`}
+                                >
+                                  ×
+                                </button>
+                              </>
                             )}
                           </div>
+
+                          <div className="ticker-card-head">
+                            <div>
+                              <span className="ticker-name">{cleanName}</span>
+                              <div className="ticker-fullname">{summary ? summary.name : 'Karachi Stock Exchange'}</div>
+                            </div>
+                            <div style={{ textAlign: 'right' }}>
+                              {summary ? (
+                                <>
+                                  <div className="price-value">Rs. {summary.current_price.toFixed(2)}</div>
+                                  <div className={`price-change ${summary.change >= 0 ? 'up' : 'down'}`}>
+                                    {summary.change >= 0 ? '+' : ''}{summary.change_percent.toFixed(2)}%
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="price-value">Loading…</div>
+                              )}
+                            </div>
+                          </div>
+
+                          {summary && (
+                            <>
+                              <div className="ticker-card-signal">
+                                <span className={`signal-pill ${summary.signal.toLowerCase()}`}>
+                                  {summary.signal === 'SELL' ? 'EXIT' : summary.signal}
+                                </span>
+                                {summary.high_conviction && <span className="conviction-tag">HIGH CONVICTION</span>}
+                                {summary.entry_timing === 'WAIT' && <span className="wait-tag">WAIT FOR PRICE</span>}
+                                {stale && <span className="stale-tag" title={`Last bar ${summary.updated_at}`}>DATA {summary.stale_days}d OLD</span>}
+                              </div>
+
+                              {/* Confidence is the field that actually separates
+                                  outcomes in testing, so it gets the visual weight. */}
+                              <div className="confidence-row">
+                                <div className="confidence-bar">
+                                  <div
+                                    className={`confidence-fill ${summary.confidence >= 70 ? 'strong' : summary.confidence >= 55 ? 'medium' : 'weak'}`}
+                                    style={{ width: `${Math.min(100, summary.confidence)}%` }}
+                                  />
+                                </div>
+                                <span className="confidence-value">{Math.round(summary.confidence)}%</span>
+                              </div>
+
+                              {summary.signal === 'BUY' && summary.entry_timing === 'NOW' && (
+                                <div className="ticker-levels">
+                                  <span>Target <strong>{summary.target.toFixed(2)}</strong></span>
+                                  <span>Stop <strong>{summary.stop_loss.toFixed(2)}</strong></span>
+                                  <span>{summary.hold_sessions}d</span>
+                                </div>
+                              )}
+                            </>
+                          )}
                         </div>
                       );
                     })}
@@ -692,6 +1201,63 @@ function App() {
                 )}
               </div>
             </div>
+          ) : currentScreen === 'intraday' ? (
+            /* DEDICATED INTRADAY GAP-FADE SCREEN — a day-trade strategy,
+               separate from the daily swing model. Validated OOS in
+               research_intraday.py: a big overnight gap down on PSX has
+               closed back up ~1.5-2% by end of session in 72-80% of cases
+               historically. Nothing else tested on 5-min bars cleared the
+               round-trip cost, so this is deliberately the only intraday
+               strategy shown. */
+            <div className="details-panel-wrapper">
+              <div className="glass-panel">
+                <h3 className="panel-title" style={{ fontSize: '1.15rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem', marginBottom: '1.25rem' }}>
+                  ⚡ Intraday Gap-Fade (Day Trade)
+                  <span style={{ fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-secondary)' }}>
+                    Buy the open, hold to close — not an overnight position
+                  </span>
+                </h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: 0, marginBottom: '1.25rem' }}>
+                  Fires when a stock opens ≥2.5% below yesterday's close. Historically
+                  those gaps have closed back up ~1.5-2% by end of session, 72-80% win
+                  rate out-of-sample across 29 liquid PSX names. Rescans every 2 minutes
+                  during the session. This is the only intraday factor tested (momentum,
+                  VWAP deviation, opening-range breakout, volume) that cleared PSX's
+                  ~0.3-0.5% round-trip cost — so it's the only one shown here.
+                </p>
+                {intradayOps.length === 0 ? (
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', margin: 0 }}>
+                    No stock has gapped down enough today to trigger this signal.
+                    These are rare by design — check back through the session, or
+                    tomorrow at the open.
+                  </p>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.25rem' }}>
+                    {intradayOps.map((op) => (
+                      <div key={op.symbol} className="ticker-item premium-hover-card intraday-card">
+                        <div className="ticker-item-header">
+                          <span className="ticker-symbol">{op.symbol}</span>
+                          <span className="signal-tag buy">GAP-FADE BUY</span>
+                        </div>
+                        <div className="ticker-levels">
+                          <span>Gap <strong>{op.gap_pct.toFixed(2)}%</strong></span>
+                          <span>Open <strong>{op.session_open.toFixed(2)}</strong></span>
+                          <span>Now <strong>{op.last_price.toFixed(2)}</strong></span>
+                        </div>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', margin: '0.5rem 0 0' }}>
+                          {op.expected_edge}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {intradayScannedAt && (
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.72rem', marginTop: '1rem', marginBottom: 0 }}>
+                    Scanned {new Date(intradayScannedAt * 1000).toLocaleTimeString()}
+                  </p>
+                )}
+              </div>
+            </div>
           ) : currentScreen === 'details' ? (
             /* DEDICATED DETAILS SCREEN FOR A SELECTED STOCK */
             <div className="details-panel-wrapper">
@@ -760,8 +1326,9 @@ function App() {
                     <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: '1.5rem', marginBottom: '2rem' }} className="gauge-targets-grid">
                       <SpeedometerGauge
                         signal={selectedSignal.signal}
-                        buyScore={selectedSignal.buy_score}
-                        sellScore={selectedSignal.sell_score}
+                        score={selectedSignal.score}
+                        confidence={selectedSignal.confidence}
+                        highConviction={selectedSignal.high_conviction}
                       />
 
                       <div style={{ background: '#ffffff', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '1.5rem' }}>
@@ -837,41 +1404,9 @@ function App() {
 
                     {/* SVG Chart Render */}
                     {activeChartTab === 'candlestick' ? (
-                      <CandlestickChart chartData={chartData} loadingChart={loadingChart} maxVal={chartMax} minVal={chartMin} />
+                      <CandlestickChart chartData={chartData} loadingChart={loadingChart} />
                     ) : (
-                      (() => {
-                        if (chartData.length === 0) return <SparklineChart chartData={[]} />;
-                        const prices = chartData.map(d => d.close);
-                        const maxPrice = Math.max(...prices);
-                        const minPrice = Math.min(...prices);
-                        const priceDiff = maxPrice - minPrice || 1;
-                        const width = 500;
-                        const height = 150;
-                        const padding = 10;
-                        const coordinates = chartData.slice(-40).map((p, idx) => {
-                          const x = padding + (idx / 39) * (width - padding * 2);
-                          const y = padding + (1 - (p.close - minPrice) / priceDiff) * (height - padding * 2);
-                          return { x, y };
-                        });
-                        const linePointsStr = coordinates.map(c => `${c.x},${c.y}`).join(' ');
-                        const areaPathStr = `M ${coordinates[0].x} ${height} ` +
-                          coordinates.map(c => `L ${c.x} ${c.y}`).join(' ') +
-                          ` L ${coordinates[coordinates.length - 1].x} ${height} Z`;
-                        const isUp = prices[prices.length - 1] >= prices[0];
-                        return (
-                          <SparklineChart
-                            chartData={chartData}
-                            maxPrice={maxPrice}
-                            minPrice={minPrice}
-                            chartColor={isUp ? 'var(--color-buy)' : 'var(--color-sell)'}
-                            chartGradientId={isUp ? 'greenGrad' : 'redGrad'}
-                            areaPathStr={areaPathStr}
-                            linePointsStr={linePointsStr}
-                            width={width}
-                            height={height}
-                          />
-                        );
-                      })()
+                      <SparklineChart chartData={chartData} loading={loadingChart} />
                     )}
 
                     {/* AskAnalyst Company Profile details */}
