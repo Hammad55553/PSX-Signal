@@ -334,15 +334,19 @@ def market_status():
 # the PSX Data Portal's live tick feed, separate from the daily signal cache.
 INTRADAY_REFRESH_SECONDS = 120
 _intraday: Dict[str, Any] = {"data": None, "scanning": False}
-_prior_close_cache: Dict[str, float] = {}
+# Keyed by (ticker, today's date) so a long-lived process (unlike Vercel's
+# cold-started functions) still refetches "prior close" once the session
+# rolls over, instead of quoting yesterday's number forever.
+_prior_close_cache: Dict[tuple, float] = {}
 
 
 def _gap_fade_for(ticker: str):
-    pc = _prior_close_cache.get(ticker)
+    cache_key = (ticker, time.strftime("%Y-%m-%d"))
+    pc = _prior_close_cache.get(cache_key)
     if pc is None:
         pc = get_prior_close(ticker)
         if pc:
-            _prior_close_cache[ticker] = pc
+            _prior_close_cache[cache_key] = pc
     if not pc:
         return None
     return gap_fade_signal(ticker, pc)
