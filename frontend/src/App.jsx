@@ -237,7 +237,15 @@ function App() {
       try {
         const data = await api.fetchSymbols();
         if (Array.isArray(data)) {
-          setAllSymbolsList(data);
+          // PSX's symbol list includes TFCs, sukuk and other debt instruments
+          // (e.g. "BOPTFC2") that have no equity chart history and will
+          // always fail to load — same equity-only filter the backend's
+          // market sweep already applies, kept in sync here so autocomplete
+          // never offers a symbol destined to error out.
+          const equities = data.filter(
+            (item) => /^[A-Z]+$/.test(item.symbol || '') && (item.symbol || '').length <= 8
+          );
+          setAllSymbolsList(equities);
         }
       } catch (err) {
         console.error("Error loading symbols list:", err);
