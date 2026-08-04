@@ -155,18 +155,56 @@ function App() {
     }
     applyScanRef.current = applyScan;
 
-    // Setup WebSocket connection to receive real-time streams with auto-reconnection
+    // Setup WebSocket connection to receive real-time streams, falling back
+    // to HTTP polling if it can't stay open.
+    //
+    // On Vercel, /ws/signals runs as a serverless function — there is no
+    // persistent process to hold a WebSocket upgrade open, so every attempt
+    // closes immediately. Retrying that forever every 3s just hammers the
+    // endpoint without ever recovering. After a couple of failed attempts
+    // this gives up on WS for the session and polls instead, which reaches
+    // the same cached payload every 8s and is what actually works there.
     let ws;
     let reconnectTimeout;
+    let fallbackInterval;
+    let wsAttempts = 0;
+    const MAX_WS_ATTEMPTS = 2;
+
+    async function fetchSignalsHttp() {
+      try {
+        const res = await fetch(api.signalsUrl(), { cache: 'no-store' });
+        if (!res.ok) { setWsLive(false); return; }
+        const data = await res.json();
+        if (data.results) applyScan(data);
+        setWsLive(true);
+      } catch (err) {
+        console.error("Error polling signals via HTTP:", err);
+        setWsLive(false);
+      }
+    }
+
+    function startPolling() {
+      if (fallbackInterval) return;
+      console.log("WebSocket unavailable — falling back to HTTP polling.");
+      fetchSignalsHttp();
+      fallbackInterval = setInterval(fetchSignalsHttp, 8000);
+    }
 
     function connectWebSocket() {
+      if (wsAttempts >= MAX_WS_ATTEMPTS) {
+        startPolling();
+        return;
+      }
+      wsAttempts += 1;
       setError(null);
       ws = new WebSocket(api.getWebSocketUrl());
 
       ws.onopen = () => {
         console.log("WebSocket connected successfully");
+        wsAttempts = 0;
         setError(null);
         setWsLive(true);
+        if (fallbackInterval) { clearInterval(fallbackInterval); fallbackInterval = null; }
       };
 
       ws.onmessage = (event) => {
@@ -178,35 +216,19 @@ function App() {
       };
 
       ws.onclose = () => {
-        console.log("WebSocket disconnected. Retrying in 3 seconds...");
         setWsLive(false);
-        reconnectTimeout = setTimeout(() => {
-          connectWebSocket();
-        }, 3000);
+        if (wsAttempts >= MAX_WS_ATTEMPTS) {
+          startPolling();
+        } else {
+          reconnectTimeout = setTimeout(connectWebSocket, 3000);
+        }
       };
 
-      ws.onerror = (err) => {
-        console.error("WebSocket connection error. Activating HTTP polling fallback...", err);
-        triggerFallbackPolling();
+      ws.onerror = () => {
+        // onclose always follows onerror for a failed handshake, so the
+        // fallback decision is made there — this just avoids an unhandled
+        // console error for what is an expected condition on serverless.
       };
-    }
-
-    async function fetchSignalsHttp() {
-      try {
-        const res = await fetch(api.signalsUrl());
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.results) applyScan(data);
-      } catch (err) {
-        console.error("Error polling signals via HTTP:", err);
-      }
-    }
-
-    let fallbackInterval;
-    function triggerFallbackPolling() {
-      if (fallbackInterval) return;
-      fetchSignalsHttp();
-      fallbackInterval = setInterval(fetchSignalsHttp, 8000);
     }
 
     connectWebSocket();
